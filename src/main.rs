@@ -3,32 +3,25 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, anyhow, bail};
-use chrono::{DateTime, Utc};
+use anyhow::{Context, Result, bail};
+use chrono::{Utc};
 use clap::{Parser, Subcommand};
-use dialoguer::{Confirm, Select, theme::ColorfulTheme};
+use dialoguer::{Confirm, Select, theme::ColorfulTheme, FuzzySelect};
 use dirs_next::{cache_dir, data_dir};
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
+use config::AppConfig;
 
 mod config;
 mod providers;
 mod sync;
 mod types;
-
-use config::AppConfig;
-use anyhow::{Result, bail};
-use chrono::Utc;
-use clap::Parser;
-use dialoguer::{FuzzySelect, Select};
-use reqwest::StatusCode;
-
 mod cache;
 mod history;
 mod player;
-mod providers;
 mod proxy;
-mod types;
+
+
 
 use cache::{MangaCacheState, cache_manga_pages};
 use history::{History, HistoryEntry, history_path, theme};
@@ -41,8 +34,7 @@ use sync::{
     SyncUpdate, WatchStatus,
     mal::{CurrentListStatus, MalClient, MalIdCache, MalToken},
 };
-use types::{ChapterCounts, EpisodeCounts, MangaInfo, Page, ShowInfo, StreamOption, Translation};
-use types::{ChapterCounts, EpisodeCounts, MangaInfo, Provider, ShowInfo, Translation};
+use types::{ChapterCounts, EpisodeCounts, MangaInfo,  ShowInfo,  Translation,Provider};
 
 const INITIAL_MANGA_PAGE_PRELOAD: usize = 5;
 
@@ -823,7 +815,7 @@ async fn play_show(
 
         let next_candidate = next_episode_label_presorted(&chosen, &sorted_episodes);
 
-        launch_player(&stream, &show.title, &chosen, player)?;
+        launch_player(&stream, &show.title, &chosen, player).await?;
 
         history.upsert(HistoryEntry {
             show_id: show.id.clone(),
