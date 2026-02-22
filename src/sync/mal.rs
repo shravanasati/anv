@@ -404,18 +404,19 @@ impl MalClient {
     }
 
     /// Update MAL anime list status.
-    async fn update_list_status(
-        &self,
-        mal_id: u32,
-        status: &str,
-        num_watched_episodes: u32,
-    ) -> Result<()> {
+    async fn update_list_status(&self, mal_id: u32, update: &SyncUpdate) -> Result<()> {
         let mut form: HashMap<&str, String> = HashMap::new();
-        form.insert("status", status.to_string());
-        form.insert("num_watched_episodes", num_watched_episodes.to_string());
+        form.insert("status", update.status.as_str().to_string());
+        form.insert("num_watched_episodes", update.episode.to_string());
+        if let Some(ref d) = update.start_date {
+            form.insert("start_date", d.clone());
+        }
+        if let Some(ref d) = update.finish_date {
+            form.insert("finish_date", d.clone());
+        }
 
         self.http
-            .put(format!("{MAL_API_BASE}/anime/{mal_id}/my_list_status"))
+            .patch(format!("{MAL_API_BASE}/anime/{mal_id}/my_list_status"))
             .bearer_auth(&self.token.access_token)
             .form(&form)
             .send()
@@ -444,8 +445,7 @@ impl MalClient {
     /// The real sync entry point used by the anime playback loop.
     /// Caller must supply the resolved MAL ID.
     pub async fn update_status_with_id(&self, mal_id: u32, update: &SyncUpdate) -> Result<()> {
-        self.update_list_status(mal_id, update.status.as_str(), update.episode)
-            .await
+        self.update_list_status(mal_id, update).await
     }
 
     /// Fetch the current list status for an anime.

@@ -276,11 +276,10 @@ impl History {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let result = run().await;
-    if let Err(err) = &result {
-        eprintln!("error: {err:?}");
-    }
-    result
+    run().await.map_err(|err| {
+        eprintln!("error: {err:#}");
+        std::process::exit(1);
+    })
 }
 
 async fn run() -> Result<()> {
@@ -394,7 +393,7 @@ async fn run_sync_enable_mal(cfg: &AppConfig) -> Result<()> {
         bail!(
             "MAL client_id is not set.\n\
              1. Go to https://myanimelist.net/apiconfig and create an application.\n\
-             2. Set the redirect URI to: http://localhost:11422/callback\n\
+             2. Set the app type to 'other' and redirect URI to: http://localhost:11422/callback\n\
              3. Copy the Client ID and add it to your config:\n\
              \n\
              [mal]\n\
@@ -1083,11 +1082,33 @@ async fn play_show(
                 };
 
                 if should_update {
+                    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                    // Set start_date when first *actually starting* to watch:
+                    // - not on list at all, OR
+                    // - was plan_to_watch (never actually started)
+                    let is_first_start = new_status == WatchStatus::Watching
+                        && match &current {
+                            None => true,
+                            Some(cur) => cur.status == "plan_to_watch",
+                        };
+                    let start_date = if is_first_start {
+                        Some(today.clone())
+                    } else {
+                        None
+                    };
+                    // Set finish_date whenever marking as completed
+                    let finish_date = if new_status == WatchStatus::Completed {
+                        Some(today)
+                    } else {
+                        None
+                    };
                     let update = SyncUpdate {
                         title: show.title.clone(),
                         episode: ep_num,
                         total_episodes: if total_eps > 0 { Some(total_eps) } else { None },
                         status: new_status,
+                        start_date,
+                        finish_date,
                     };
                     match mal.update_status_with_id(mal_id, &update).await {
                         Ok(()) => {

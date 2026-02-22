@@ -44,6 +44,10 @@ pub struct SyncUpdate {
     /// Total number of episodes if known (used to decide Completed vs Watching).
     pub total_episodes: Option<u32>,
     pub status: WatchStatus,
+    /// YYYY-MM-DD: set when first adding the anime to the list (not-on-list → watching).
+    pub start_date: Option<String>,
+    /// YYYY-MM-DD: set when the anime is marked completed.
+    pub finish_date: Option<String>,
 }
 
 /// Common interface for list-sync providers (MAL, AniList, etc.).
