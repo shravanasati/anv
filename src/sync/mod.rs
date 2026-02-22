@@ -1,5 +1,7 @@
 use anyhow::Result;
 
+use crate::sync::mal::CurrentListStatus;
+
 pub mod mal;
 
 /// Possible watch statuses mirroring MAL's status field.
@@ -59,4 +61,19 @@ pub trait SyncProvider: Send + Sync {
         &self,
         update: &SyncUpdate,
     ) -> impl std::future::Future<Output = Result<()>> + Send;
+}
+
+/// Returns `true` when a user confirmation prompt is needed before syncing.
+///
+/// Prompt required when:
+/// - Anime is not on the user's list yet (first time → Watching)
+/// - Status is changing (Watching → Completed, etc.)
+///
+/// Silent update when:
+/// - Already Watching and we're just advancing the episode count
+pub fn should_confirm_sync(current: &Option<CurrentListStatus>, new_status: WatchStatus) -> bool {
+    match current {
+        None => true, // not on list — adding for the first time
+        Some(cur) => cur.status != new_status.as_str(),
+    }
 }

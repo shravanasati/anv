@@ -4,24 +4,20 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use chrono::{Utc};
+use chrono::Utc;
 use clap::{Parser, Subcommand};
-use dialoguer::{Confirm, Select, theme::ColorfulTheme, FuzzySelect};
-use dirs_next::{cache_dir, data_dir};
-use reqwest::{Client, StatusCode};
-use serde::{Deserialize, Serialize};
 use config::AppConfig;
+use dialoguer::{Confirm, FuzzySelect, Select, theme::ColorfulTheme};
+use reqwest::StatusCode;
 
-mod config;
-mod providers;
-mod sync;
-mod types;
 mod cache;
+mod config;
 mod history;
 mod player;
+mod providers;
 mod proxy;
-
-
+mod sync;
+mod types;
 
 use cache::{MangaCacheState, cache_manga_pages};
 use history::{History, HistoryEntry, history_path, theme};
@@ -32,9 +28,10 @@ use providers::{
 };
 use sync::{
     SyncUpdate, WatchStatus,
-    mal::{CurrentListStatus, MalClient, MalIdCache, MalToken},
+    mal::{MalClient, MalIdCache, MalToken, build_mal_client_if_enabled},
+    should_confirm_sync,
 };
-use types::{ChapterCounts, EpisodeCounts, MangaInfo,  ShowInfo,  Translation,Provider};
+use types::{ChapterCounts, EpisodeCounts, MangaInfo, Provider, ShowInfo, Translation};
 
 const INITIAL_MANGA_PAGE_PRELOAD: usize = 5;
 
@@ -174,36 +171,6 @@ async fn run() -> Result<()> {
         mal_client.as_ref(),
     )
     .await
-}
-
-/// Build a MalClient only when sync is enabled and a stored token exists.
-fn build_mal_client_if_enabled(cfg: &AppConfig) -> Option<MalClient> {
-    if !cfg.sync.enabled {
-        return None;
-    }
-    if cfg.mal.client_id.is_empty() {
-        eprintln!("[sync] mal.client_id is not set in config — sync disabled.");
-        return None;
-    }
-    match MalToken::load() {
-        Ok(Some(token)) => match MalClient::from_token(cfg.mal.client_id.clone(), token) {
-            Ok(client) => Some(client),
-            Err(err) => {
-                eprintln!("[sync] Failed to initialize MAL client: {err}");
-                None
-            }
-        },
-        Ok(None) => {
-            eprintln!(
-                "[sync] Sync is enabled but no MAL token found. Run `anv sync enable mal` first."
-            );
-            None
-        }
-        Err(err) => {
-            eprintln!("[sync] Failed to load MAL token: {err}");
-            None
-        }
-    }
 }
 
 /// `anv sync enable mal` — authenticates with MAL if needed.
@@ -960,19 +927,4 @@ fn sorted_episode_labels(episodes: &[String]) -> Vec<String> {
 fn next_episode_label_presorted(current: &str, sorted: &[String]) -> Option<String> {
     let pos = sorted.iter().position(|ep| ep == current)?;
     sorted.get(pos + 1).cloned()
-}
-
-/// Returns `true` when a user confirmation prompt is needed before syncing.
-///
-/// Prompt required when:
-/// - Anime is not on the user's list yet (first time → Watching)
-/// - Status is changing (Watching → Completed, etc.)
-///
-/// Silent update when:
-/// - Already Watching and we're just advancing the episode count
-fn should_confirm_sync(current: &Option<CurrentListStatus>, new_status: WatchStatus) -> bool {
-    match current {
-        None => true, // not on list — adding for the first time
-        Some(cur) => cur.status != new_status.as_str(),
-    }
 }

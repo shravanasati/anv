@@ -15,6 +15,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::config::AppConfig;
+
 use super::{SyncProvider, SyncUpdate};
 
 const MAL_AUTH_URL: &str = "https://myanimelist.net/v1/oauth2/authorize";
@@ -23,7 +25,6 @@ const MAL_API_BASE: &str = "https://api.myanimelist.net/v2";
 const OAUTH_PORT: u16 = 11422;
 const OAUTH_REDIRECT_URI: &str = "http://localhost:11422/callback";
 const CODE_VERIFIER_LEN: usize = 64;
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MalToken {
@@ -69,7 +70,6 @@ impl MalToken {
     }
 }
 
-
 /// Persistent cache that maps AllAnime show IDs to MAL anime IDs.
 /// The confirmation dialog is shown only for IDs not yet in this cache.
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -112,14 +112,12 @@ impl MalIdCache {
     }
 }
 
-
 fn generate_code_verifier() -> String {
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
     (0..CODE_VERIFIER_LEN)
         .map(|_| CHARSET[rand::random_range(0..CHARSET.len())] as char)
         .collect()
 }
-
 
 #[derive(Debug, Deserialize)]
 struct TokenResponse {
@@ -153,7 +151,6 @@ struct AlternativeTitles {
     #[serde(default)]
     ja: String,
 }
-
 
 pub struct MalClient {
     client_id: String,
@@ -478,4 +475,34 @@ impl MalClient {
 pub struct CurrentListStatus {
     pub status: String,
     pub num_episodes_watched: u32,
+}
+
+/// Build a MalClient only when sync is enabled and a stored token exists.
+pub fn build_mal_client_if_enabled(cfg: &AppConfig) -> Option<MalClient> {
+    if !cfg.sync.enabled {
+        return None;
+    }
+    if cfg.mal.client_id.is_empty() {
+        eprintln!("[sync] mal.client_id is not set in config — sync disabled.");
+        return None;
+    }
+    match MalToken::load() {
+        Ok(Some(token)) => match MalClient::from_token(cfg.mal.client_id.clone(), token) {
+            Ok(client) => Some(client),
+            Err(err) => {
+                eprintln!("[sync] Failed to initialize MAL client: {err}");
+                None
+            }
+        },
+        Ok(None) => {
+            eprintln!(
+                "[sync] Sync is enabled but no MAL token found. Run `anv sync enable mal` first."
+            );
+            None
+        }
+        Err(err) => {
+            eprintln!("[sync] Failed to load MAL token: {err}");
+            None
+        }
+    }
 }

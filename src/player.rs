@@ -32,7 +32,12 @@ pub fn choose_stream(mut options: Vec<StreamOption>) -> Result<Option<StreamOpti
     Ok(Some(options.remove(idx)))
 }
 
-pub async fn launch_player(stream: &StreamOption, title: &str, episode: &str, player: &str) -> Result<()> {
+pub async fn launch_player(
+    stream: &StreamOption,
+    title: &str,
+    episode: &str,
+    player: &str,
+) -> Result<()> {
     let mut cmd = Command::new(&player);
     let media_title = format!("{title} - Episode {episode}");
     cmd.arg("--quiet");
