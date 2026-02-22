@@ -1,5 +1,6 @@
+use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -24,6 +25,12 @@ impl Translation {
             Translation::Dub => "Dub",
             Translation::Raw => "Raw",
         }
+    }
+}
+
+impl fmt::Display for Translation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
     }
 }
 
@@ -53,6 +60,15 @@ pub struct ChapterCounts {
     pub raw: usize,
 }
 
+/// A manga chapter with a human-readable display label (e.g. `"271.5"`) and a
+/// provider-specific identifier used to fetch pages (may differ from the label,
+/// e.g. a UUID on MangaDex or a URL slug on Mangapill).
+#[derive(Debug, Clone)]
+pub struct Chapter {
+    pub id: String,
+    pub label: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct StreamOption {
     pub provider: String,
@@ -75,4 +91,13 @@ impl StreamOption {
 pub struct Page {
     pub url: String,
     pub headers: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Provider {
+    #[default]
+    Allanime,
+    Mangadex,
+    Mangapill,
 }
