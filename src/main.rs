@@ -798,11 +798,9 @@ async fn play_show(
         // MAL sync: look up cached MAL ID or resolve+confirm once, then update
         if let Some(mal) = mal_client {
             let ep_num = chosen.parse::<u32>().unwrap_or(0);
-            let total_eps = match translation {
-                Translation::Sub => show.available_eps.sub as u32,
-                Translation::Dub => show.available_eps.dub as u32,
-                Translation::Raw => 0,
-            };
+            // Use the fetched episodes list as the source of truth — the search-result
+            // snapshot (show.available_eps) can be 0 when the API omits it.
+            let total_eps = episodes.len() as u32;
             let new_status = if total_eps > 0 && ep_num >= total_eps {
                 WatchStatus::Completed
             } else {
@@ -871,6 +869,27 @@ async fn play_show(
                     } else {
                         None
                     };
+
+                    // If the anime is now complete, ask the user to rate it before
+                    let score: Option<u8> = if new_status == WatchStatus::Completed {
+                        let mut rating_options: Vec<String> =
+                            (1u8..=10).map(|n| format!("{}/10", n)).collect();
+                        rating_options.push("Skip (no rating)".to_string());
+
+                        let rating_idx = Select::with_theme(&ColorfulTheme::default())
+                            .with_prompt(format!("Rate \"{}\" on MAL (Esc to skip)", show.title))
+                            .items(&rating_options)
+                            .default(rating_options.len() - 1) // default to Skip
+                            .interact_opt()?;
+
+                        match rating_idx {
+                            Some(idx) if idx < 10 => Some(idx as u8 + 1),
+                            _ => None, // Skip selected or Esc pressed
+                        }
+                    } else {
+                        None
+                    };
+
                     let update = SyncUpdate {
                         title: show.title.clone(),
                         episode: ep_num,
@@ -878,6 +897,7 @@ async fn play_show(
                         status: new_status,
                         start_date,
                         finish_date,
+                        score,
                     };
                     match mal.update_status_with_id(mal_id, &update).await {
                         Ok(()) => {
@@ -889,6 +909,11 @@ async fn play_show(
                                 );
                             } else {
                                 println!("[sync] MAL progress saved: ep {}", ep_num);
+                            }
+                            if let Some(score_val) = score {
+                                println!("[sync] MAL score submitted: {}/10", score_val);
+                            } else if new_status == WatchStatus::Completed {
+                                println!("[sync] Rating skipped.");
                             }
                         }
                         Err(err) => eprintln!("[sync] Failed to update MAL: {err}"),

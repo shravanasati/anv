@@ -331,19 +331,6 @@ impl MalClient {
         })
     }
 
-    /// If the current token is expired, refresh it using `self.client_id`.
-    fn ensure_token_fresh(&mut self) -> Result<()> {
-        if self.token.is_expired() {
-            self.token = Self::refresh_token_inner(
-                &self.http,
-                &self.client_id,
-                &self.token.refresh_token.clone(),
-            )?;
-            self.token.save()?;
-        }
-        Ok(())
-    }
-
     /// Search MAL for `title`, show the top result (English + Japanese titles)
     /// and ask the user to confirm it's the right anime.
     /// Returns `Some(mal_id)` if confirmed, `None` if user declines.
@@ -410,6 +397,9 @@ impl MalClient {
         }
         if let Some(ref d) = update.finish_date {
             form.insert("finish_date", d.clone());
+        }
+        if let Some(score) = update.score {
+            form.insert("score", score.to_string());
         }
 
         self.http

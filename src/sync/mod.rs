@@ -50,6 +50,8 @@ pub struct SyncUpdate {
     pub start_date: Option<String>,
     /// YYYY-MM-DD: set when the anime is marked completed.
     pub finish_date: Option<String>,
+    /// User rating 1–10 to submit to MAL. None means no score change.
+    pub score: Option<u8>,
 }
 
 /// Common interface for list-sync providers (MAL, AniList, etc.).
