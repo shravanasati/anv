@@ -125,7 +125,7 @@ async fn run() -> Result<()> {
     let mut history = History::load(&history_path)?;
 
     // Build MAL client if sync is enabled and a token exists
-    let mal_client = build_mal_client_if_enabled(&cfg);
+    let mal_client = build_mal_client_if_enabled(&cfg).await;
 
     if cli.manga {
         let translation = if cli.raw {
@@ -211,9 +211,8 @@ async fn run_sync_enable_mal(cfg: &AppConfig) -> Result<()> {
     // OAuth involves blocking I/O; run it in a blocking thread so we don't
     // block the async executor.
     let client_id = cfg.mal.client_id.clone();
-    let token = tokio::task::spawn_blocking(move || MalClient::authenticate(&client_id))
+    let token = MalClient::authenticate(&client_id)
         .await
-        .context("OAuth task panicked")?
         .context("MAL OAuth flow failed")?;
 
     println!("\n✓ Successfully authenticated with MyAnimeList!");
