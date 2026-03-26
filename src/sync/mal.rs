@@ -161,14 +161,14 @@ pub struct MalClient {
 impl MalClient {
     /// Build a `MalClient` from an existing (possibly expired) token.
     /// Call `MalClient::authenticate` first if no token exists.
-    pub fn from_token(client_id: String, mut token: MalToken) -> Result<Self> {
+    pub async fn from_token(client_id: String, mut token: MalToken) -> Result<Self> {
         let http = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
             .context("failed to build HTTP client")?;
 
         if token.is_expired() {
-            token = Self::refresh_token_inner(&http, &client_id, &token.refresh_token)?;
+            token = Self::refresh_token_inner(&http, &client_id, &token.refresh_token).await?;
             token.save()?;
         }
 
@@ -181,7 +181,7 @@ impl MalClient {
 
     /// Full OAuth PKCE flow: opens browser, spins up local callback server,
     /// exchanges code for tokens, and saves them to disk.
-    pub fn authenticate(client_id: &str) -> Result<MalToken> {
+    pub async fn authenticate(client_id: &str) -> Result<MalToken> {
         let verifier = generate_code_verifier();
         let challenge = verifier.clone();
 
@@ -200,8 +200,12 @@ impl MalClient {
         println!("If it doesn't open automatically, visit:\n  {auth_url}");
         let _ = open::that(&auth_url);
 
-        let code =
-            Self::wait_for_callback().context("Failed to receive OAuth callback from browser")?;
+        // The callback listener uses blocking I/O; run it on a blocking thread
+        // so we don't block the async executor.
+        let code = tokio::task::spawn_blocking(Self::wait_for_callback)
+            .await
+            .context("OAuth callback task panicked")?
+            .context("Failed to receive OAuth callback from browser")?;
 
         println!("Authorization code received. Exchanging for token...");
 
@@ -210,7 +214,7 @@ impl MalClient {
             .build()
             .context("failed to build HTTP client")?;
 
-        let token = Self::exchange_code(&http, client_id, &code, &verifier)?;
+        let token = Self::exchange_code(&http, client_id, &code, &verifier).await?;
         token.save()?;
         Ok(token)
     }
@@ -263,7 +267,7 @@ impl MalClient {
         Ok(code)
     }
 
-    fn exchange_code(
+    async fn exchange_code(
         http: &Client,
         client_id: &str,
         code: &str,
@@ -277,19 +281,17 @@ impl MalClient {
             ("redirect_uri", OAUTH_REDIRECT_URI),
         ];
 
-        let rt = tokio::runtime::Handle::current();
-        let resp: TokenResponse = rt.block_on(async {
-            http.post(MAL_TOKEN_URL)
-                .form(&params)
-                .send()
-                .await
-                .context("token exchange request failed")?
-                .error_for_status()
-                .context("MAL returned error on token exchange")?
-                .json::<TokenResponse>()
-                .await
-                .context("failed to parse token response")
-        })?;
+        let resp: TokenResponse = http
+            .post(MAL_TOKEN_URL)
+            .form(&params)
+            .send()
+            .await
+            .context("token exchange request failed")?
+            .error_for_status()
+            .context("MAL returned error on token exchange")?
+            .json::<TokenResponse>()
+            .await
+            .context("failed to parse token response")?;
 
         Ok(MalToken {
             access_token: resp.access_token,
@@ -299,7 +301,7 @@ impl MalClient {
     }
 
     /// Refresh the access token using the stored client_id, if expired.
-    fn refresh_token_inner(
+    async fn refresh_token_inner(
         http: &Client,
         client_id: &str,
         refresh_token: &str,
@@ -310,19 +312,17 @@ impl MalClient {
             ("refresh_token", refresh_token),
         ];
 
-        let rt = tokio::runtime::Handle::current();
-        let resp: TokenResponse = rt.block_on(async {
-            http.post(MAL_TOKEN_URL)
-                .form(&params)
-                .send()
-                .await
-                .context("token refresh request failed")?
-                .error_for_status()
-                .context("MAL returned error on token refresh")?
-                .json::<TokenResponse>()
-                .await
-                .context("failed to parse refresh token response")
-        })?;
+        let resp: TokenResponse = http
+            .post(MAL_TOKEN_URL)
+            .form(&params)
+            .send()
+            .await
+            .context("token refresh request failed")?
+            .error_for_status()
+            .context("MAL returned error on token refresh")?
+            .json::<TokenResponse>()
+            .await
+            .context("failed to parse refresh token response")?;
 
         Ok(MalToken {
             access_token: resp.access_token,
@@ -484,7 +484,7 @@ pub struct AnimeInfo {
 }
 
 /// Build a MalClient only when sync is enabled and a stored token exists.
-pub fn build_mal_client_if_enabled(cfg: &AppConfig) -> Option<MalClient> {
+pub async fn build_mal_client_if_enabled(cfg: &AppConfig) -> Option<MalClient> {
     if !cfg.sync.enabled {
         return None;
     }
@@ -493,7 +493,7 @@ pub fn build_mal_client_if_enabled(cfg: &AppConfig) -> Option<MalClient> {
         return None;
     }
     match MalToken::load() {
-        Ok(Some(token)) => match MalClient::from_token(cfg.mal.client_id.clone(), token) {
+        Ok(Some(token)) => match MalClient::from_token(cfg.mal.client_id.clone(), token).await {
             Ok(client) => Some(client),
             Err(err) => {
                 eprintln!("[sync] Failed to initialize MAL client: {err}");
