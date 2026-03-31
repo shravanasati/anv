@@ -10,6 +10,9 @@ pub struct AppConfig {
     pub player: String,
 
     #[serde(default)]
+    pub binge: bool,
+
+    #[serde(default)]
     pub mal: MalConfig,
 
     #[serde(default)]
@@ -39,6 +42,9 @@ const CONFIG_HEADER: &str = "# anv configuration
 # player — media player command (default: \"mpv\")
 #           also overridable with ANV_PLAYER env var
 #
+# binge   — set to true to auto-play the next episode without prompting
+#           (can also be enabled per-session with the --binge flag)
+#
 # [mal]
 #   client_id — your MAL API client ID
 #               register at https://myanimelist.net/apiconfig
@@ -53,6 +59,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             player: default_player(),
+            binge: false,
             mal: MalConfig::default(),
             sync: SyncConfig::default(),
         }

@@ -46,6 +46,8 @@ struct Cli {
     history: bool,
     #[arg(long)]
     manga: bool,
+    #[arg(long)]
+    binge: bool,
     #[arg(long, default_value = "allanime", value_enum)]
     provider: Provider,
     #[arg(long, value_name = "DIR")]
@@ -161,6 +163,7 @@ async fn run() -> Result<()> {
     if !matches!(cli.provider, Provider::Allanime) {
         eprintln!("Warning: Only 'allanime' provider supports anime. Switching to 'allanime'.");
     }
+    let binge = cli.binge || cfg.binge;
     run_anime_flow(
         &cli,
         translation,
@@ -169,6 +172,7 @@ async fn run() -> Result<()> {
         &history_path,
         cfg.player.clone(),
         mal_client.as_ref(),
+        binge,
     )
     .await
 }
@@ -538,6 +542,7 @@ async fn run_anime_flow(
     history_path: &Path,
     player: String,
     mal_client: Option<&MalClient>,
+    binge: bool,
 ) -> Result<()> {
     let client = AllAnimeClient::new()?;
 
@@ -605,6 +610,7 @@ async fn run_anime_flow(
                     Some(entry.episode.clone()),
                     &player,
                     mal_client,
+                    binge,
                 )
                 .await?;
             }
@@ -655,6 +661,7 @@ async fn run_anime_flow(
         cli.episode.clone(),
         &player,
         mal_client,
+        binge,
     )
     .await
 }
@@ -669,6 +676,7 @@ async fn play_show(
     prefer_episode: Option<String>,
     player: &str,
     mal_client: Option<&MalClient>,
+    binge: bool,
 ) -> Result<()> {
     let episodes = client.fetch_episodes(&show.id, translation).await?;
     if episodes.is_empty() {
@@ -729,7 +737,9 @@ async fn play_show(
             .or_else(|| episodes.iter().position(|ep| ep == &latest_available))
             .unwrap_or(0);
 
-        let idx = if skip_selection {
+        let idx = if skip_selection || binge {
+            // skip_selection is set on the very first iteration when --episode
+            // was given. binge keeps skipping on every subsequent iteration.
             skip_selection = false;
             default_idx
         } else {
@@ -937,7 +947,7 @@ async fn play_show(
                 }
             }
         };
-        match (auto_advance, next_candidate) {
+        match (auto_advance || binge, next_candidate) {
             (true, Some(next)) => current_episode = next,
             (true, None) => {
                 println!("No further episodes found. Exiting.");
