@@ -87,7 +87,11 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
     /// Browse your watch/read history and resume from where you left off.
-    History,
+    History {
+        /// Automatically play the next episode without prompting (binge mode).
+        #[arg(short = 'b', long)]
+        binge: bool,
+    },
 
     /// Manage sync with external anime list services (e.g. MyAnimeList).
     Sync {
@@ -132,11 +136,11 @@ async fn run() -> Result<()> {
 
     // Handle subcommands
     match &cli.command {
-        Some(Commands::History) => {
+        Some(Commands::History { binge: history_binge }) => {
             let history_path = history_path()?;
             let mut history = History::load(&history_path)?;
             let mal_client = build_mal_client_if_enabled(&cfg).await;
-            let binge = cli.binge || cfg.binge;
+            let binge = *history_binge || cli.binge || cfg.binge;
             return run_anime_flow(
                 &cli,
                 Translation::Sub,
