@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
-use dialoguer::{Confirm, Select, theme::ColorfulTheme};
+use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use dirs_next::data_dir;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -159,6 +159,9 @@ pub struct MalClient {
     /// Persistent cache mapping AllAnime show IDs → MAL anime IDs.
     /// Loaded once when the client is constructed; saved on every new mapping.
     id_cache: std::sync::Mutex<MalIdCache>,
+    /// Show IDs the user has declined to sync during this session.
+    /// Any show_id in here is silently skipped for the rest of the process.
+    skipped_ids: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl MalClient {
@@ -180,6 +183,7 @@ impl MalClient {
             http,
             token,
             id_cache: std::sync::Mutex::new(id_cache),
+            skipped_ids: std::sync::Mutex::new(std::collections::HashSet::new()),
         };
 
         if client.token.is_expired() {
@@ -339,59 +343,167 @@ impl MalClient {
         })
     }
 
-    /// Search MAL for `title`, show the top result (English + Japanese titles)
-    /// and ask the user to confirm it's the right anime.
-    /// Returns `Some(mal_id)` if confirmed, `None` if user declines.
-    pub async fn resolve_and_confirm_mal_id(&self, title: &str) -> Result<Option<u32>> {
-        let resp = self
-            .http
-            .get(format!("{MAL_API_BASE}/anime"))
-            .bearer_auth(&self.token.access_token)
-            .query(&[
-                ("q", title),
-                ("limit", "5"),
-                ("fields", "id,title,alternative_titles"),
-            ])
-            .send()
-            .await
-            .context("MAL anime search request failed")?
-            .error_for_status()
-            .context("MAL returned error on anime search")?
-            .json::<AnimeSearchResponse>()
-            .await
-            .context("failed to parse MAL anime search response")?;
+    // Strips non alphanumeric characters from the title (otherwise leads to 400 from MAL search API)
+    fn sanitize_query(query: &str) -> String {
+        query
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { ' ' })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(64)
+            .collect()
+    }
 
-        let Some(first) = resp.data.into_iter().next() else {
-            println!("  [sync] No MAL results found for \"{title}\". Skipping sync.");
-            return Ok(None);
-        };
+    /// Helper: fetch up to 5 MAL results for `query`.
+    async fn search_mal(&self, query: &str) -> Vec<AnimeDetail> {
+        let sanitized = Self::sanitize_query(query);
+        if sanitized.is_empty() {
+            eprintln!("[sync] MAL search: query is empty after sanitization.");
+            return Vec::new();
+        }
 
-        let detail = first.node;
+        let result = async {
+            let resp = self
+                .http
+                .get(format!("{MAL_API_BASE}/anime"))
+                .bearer_auth(&self.token.access_token)
+                .query(&[
+                    ("q", sanitized.as_str()),
+                    ("limit", "5"),
+                    ("fields", "id,title,alternative_titles"),
+                ])
+                .send()
+                .await
+                .context("MAL anime search request failed")?
+                .error_for_status()
+                .context("MAL returned error on anime search")?
+                .json::<AnimeSearchResponse>()
+                .await
+                .context("failed to parse MAL anime search response")?;
+
+            Ok::<_, anyhow::Error>(resp.data.into_iter().map(|n| n.node).collect::<Vec<_>>())
+        }
+        .await;
+
+        match result {
+            Ok(items) => items,
+            Err(err) => {
+                eprintln!("[sync] MAL search error for \"{sanitized}\": {err:#}");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Format an `AnimeDetail` for display in a menu item.
+    fn format_result(detail: &AnimeDetail) -> String {
         let en = if detail.alternative_titles.en.is_empty() {
             &detail.title
         } else {
             &detail.alternative_titles.en
         };
         let ja = &detail.alternative_titles.ja;
-
-        let display = if ja.is_empty() {
-            format!("\"{}\"", en)
+        if ja.is_empty() {
+            format!("{} [id:{}]", en, detail.id)
         } else {
-            format!("\"{}\" ({})", en, ja)
-        };
+            format!("{} ({}) [id:{}]", en, ja, detail.id)
+        }
+    }
 
-        let confirmed = Confirm::with_theme(&ColorfulTheme::default())
-            .with_prompt(format!(
-                "[sync] Found on MAL: {display}\n  Is this the correct anime?"
-            ))
-            .default(false)
-            .interact()?;
+    /// Search MAL for `title`, present a y/n/c prompt:
+    ///   y – accept first result
+    ///   n – skip sync for this show
+    ///   c – correction mode: shows a dropdown of all results, lets the user
+    ///       pick one, search again with a new query, or skip entirely.
+    ///
+    /// Returns `Some(mal_id)` when resolved, `None` when the user skips.
+    pub async fn resolve_and_confirm_mal_id(&self, title: &str) -> Result<Option<u32>> {
+        let mut results = self.search_mal(title).await;
 
-        if confirmed {
-            Ok(Some(detail.id))
-        } else {
-            println!("  [sync] Skipping MAL sync for this show.");
-            Ok(None)
+        if results.is_empty() {
+            println!("  [sync] No MAL results found for \"{title}\". Skipping sync.");
+            return Ok(None);
+        }
+
+        // Show the best match and ask y / n / c.
+        let best = Self::format_result(&results[0]);
+        println!("[sync] Best MAL match: {best}");
+        println!("       y = accept  |  n = skip  |  c = choose / search again");
+
+        // Read a single character from stdin.
+        let choice: String = Input::with_theme(&ColorfulTheme::default())
+            .with_prompt("[sync] Your choice (y/n/c)")
+            .validate_with(|s: &String| -> std::result::Result<(), &str> {
+                match s.trim().to_lowercase().as_str() {
+                    "y" | "n" | "c" => Ok(()),
+                    _ => Err("Please enter y, n, or c"),
+                }
+            })
+            .interact_text()?;
+
+        match choice.trim().to_lowercase().as_str() {
+            "y" => return Ok(Some(results[0].id)),
+            "n" => {
+                println!("  [sync] Skipping MAL sync for this show.");
+                return Ok(None);
+            }
+            _ => {} // "c" — fall through to correction mode
+        }
+
+        loop {
+            let mut items: Vec<String> = results.iter().map(Self::format_result).collect();
+            items.push("🔍  Search again (new query)".to_string());
+            items.push("🔢  Enter MAL ID directly".to_string());
+            items.push("⏭   Skip (no MAL sync for this show)".to_string());
+
+            let idx = Select::with_theme(&ColorfulTheme::default())
+                .with_prompt("[sync] Select the correct anime or choose an action")
+                .items(&items)
+                .default(0)
+                .interact()?;
+
+            let skip_idx = items.len() - 1;
+            let manual_idx = items.len() - 2;
+            let search_idx = items.len() - 3;
+
+            if idx == skip_idx {
+                println!("  [sync] Skipping MAL sync for this show.");
+                return Ok(None);
+            }
+
+            if idx == manual_idx {
+                let id: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("[sync] Enter MAL anime ID (numeric)")
+                    .validate_with(|s: &String| -> std::result::Result<(), &str> {
+                        match s.trim().parse::<u32>() {
+                            Ok(n) if n > 0 => Ok(()),
+                            _ => Err("Please enter a valid non-zero MAL ID"),
+                        }
+                    })
+                    .interact_text()?;
+                return Ok(Some(id.trim().parse::<u32>().unwrap()));
+            }
+
+            if idx == search_idx {
+                let new_query: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("[sync] Enter new search query")
+                    .interact_text()?;
+
+                let new_results = self.search_mal(new_query.trim()).await;
+                if new_results.is_empty() {
+                    println!(
+                        "  [sync] No results found for \"{new_query}\". Try a different query."
+                    );
+                } else {
+                    results = new_results;
+                }
+                continue;
+            }
+
+            // User picked one of the actual results.
+            return Ok(Some(results[idx].id));
         }
     }
 
@@ -481,6 +593,9 @@ impl MalClient {
     /// status is changing, and posts the patch request.
     async fn do_sync_episode(&self, show_id: &str, show_title: &str, ep_num: u32) -> Result<()> {
         // 1. Resolve MAL ID — check internal cache first.
+        if self.skipped_ids.lock().unwrap().contains(show_id) {
+            return Ok(()); // user already declined this show this session
+        }
         let cached_id = self.id_cache.lock().unwrap().get(show_id);
         let mal_id = if let Some(id) = cached_id {
             id
@@ -492,7 +607,10 @@ impl MalClient {
                     }
                     id
                 }
-                Ok(None) => return Ok(()), // user declined
+                Ok(None) => {
+                    self.skipped_ids.lock().unwrap().insert(show_id.to_string());
+                    return Ok(());
+                }
                 Err(err) => {
                     eprintln!("[sync] MAL ID resolution failed: {err}");
                     return Ok(());
