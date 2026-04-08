@@ -36,8 +36,6 @@ struct Cli {
     #[arg(long)]
     raw: bool,
     #[arg(long)]
-    history: bool,
-    #[arg(long)]
     manga: bool,
     #[arg(long)]
     binge: bool,
@@ -56,6 +54,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Open watch/read history and replay an entry.
+    History,
     /// Manage sync with external anime list services.
     Sync {
         #[command(subcommand)]
@@ -96,9 +96,24 @@ async fn run() -> Result<()> {
         eprintln!("Warning: failed to load config ({err}), using defaults.");
         AppConfig::default()
     });
+    let history_path = history_path()?;
+    let mut history = History::load(&history_path)?;
 
     // Handle sync subcommands
     match &cli.command {
+        Some(Commands::History) => {
+            return run_anime_flow(
+                &cli,
+                Translation::Sub,
+                true,
+                &mut history,
+                &history_path,
+                cfg.player.clone(),
+                None,
+                cli.binge || cfg.binge,
+            )
+            .await;
+        }
         Some(Commands::Sync {
             action:
                 SyncAction::Enable {
@@ -113,11 +128,6 @@ async fn run() -> Result<()> {
         }) => return run_sync_disable(cfg).await,
         _ => {}
     }
-
-    let history_mode =
-        cli.history || (cli.query.len() == 1 && cli.query[0].eq_ignore_ascii_case("history"));
-    let history_path = history_path()?;
-    let mut history = History::load(&history_path)?;
 
     // Build MAL client if sync is enabled and a token exists
     let mal_client = build_mal_client_if_enabled(&cfg).await;
@@ -160,7 +170,7 @@ async fn run() -> Result<()> {
     run_anime_flow(
         &cli,
         translation,
-        history_mode,
+        false,
         &mut history,
         &history_path,
         cfg.player.clone(),
@@ -612,7 +622,7 @@ async fn run_anime_flow(
     }
 
     if cli.query.is_empty() {
-        println!("No query provided. Use `anv <name>` or `anv --history`.");
+        println!("No query provided. Use `anv <name>` or `anv history`.");
         return Ok(());
     }
 
