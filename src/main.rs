@@ -3,35 +3,28 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use anv::{
+    cache::{MangaCacheState, cache_manga_pages},
+    config::AppConfig,
+    history::{History, HistoryEntry, history_path, theme},
+    player::{choose_stream, launch_image_viewer, launch_player},
+    providers::{
+        AnimeProvider, MangaProvider, allanime::AllAnimeClient, mangadex::MangaDexClient,
+        mangapill::MangapillClient,
+    },
+    sync::{
+        SyncUpdate, WatchStatus,
+        mal::{AnimeInfo, MalClient, MalIdCache, MalToken, build_mal_client_if_enabled},
+        should_confirm_sync,
+    },
+    types::{ChapterCounts, EpisodeCounts, MangaInfo, Provider, ShowInfo, Translation},
+};
+
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use clap::{Parser, Subcommand};
-use config::AppConfig;
 use dialoguer::{Confirm, FuzzySelect, Select, theme::ColorfulTheme};
 use reqwest::StatusCode;
-
-mod cache;
-mod config;
-mod history;
-mod player;
-mod providers;
-mod proxy;
-mod sync;
-mod types;
-
-use cache::{MangaCacheState, cache_manga_pages};
-use history::{History, HistoryEntry, history_path, theme};
-use player::{choose_stream, launch_image_viewer, launch_player};
-use providers::{
-    AnimeProvider, MangaProvider, allanime::AllAnimeClient, mangadex::MangaDexClient,
-    mangapill::MangapillClient,
-};
-use sync::{
-    SyncUpdate, WatchStatus,
-    mal::{AnimeInfo, MalClient, MalIdCache, MalToken, build_mal_client_if_enabled},
-    should_confirm_sync,
-};
-use types::{ChapterCounts, EpisodeCounts, MangaInfo, Provider, ShowInfo, Translation};
 
 const INITIAL_MANGA_PAGE_PRELOAD: usize = 5;
 
