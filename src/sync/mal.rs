@@ -423,33 +423,34 @@ impl MalClient {
         let mut results = self.search_mal(title).await;
 
         if results.is_empty() {
-            println!("  [sync] No MAL results found for \"{title}\". Skipping sync.");
-            return Ok(None);
-        }
+            // Search failed or yielded nothing (e.g. 400 from MAL). Drop straight
+            // into the dropdown so the user can supply a corrected query or ID.
+            println!("  [sync] No MAL results found for \"{title}\".");
+            println!("         Use 'Search again' or 'Enter MAL ID directly' below.");
+        } else {
+            // Show the best match and ask y / n / c.
+            let best = Self::format_result(&results[0]);
+            println!("[sync] Best MAL match: {best}");
+            println!("       y = accept  |  n = skip  |  c = choose / search again");
 
-        // Show the best match and ask y / n / c.
-        let best = Self::format_result(&results[0]);
-        println!("[sync] Best MAL match: {best}");
-        println!("       y = accept  |  n = skip  |  c = choose / search again");
+            let choice: String = Input::with_theme(&ColorfulTheme::default())
+                .with_prompt("[sync] Your choice (y/n/c)")
+                .validate_with(|s: &String| -> std::result::Result<(), &str> {
+                    match s.trim().to_lowercase().as_str() {
+                        "y" | "n" | "c" => Ok(()),
+                        _ => Err("Please enter y, n, or c"),
+                    }
+                })
+                .interact_text()?;
 
-        // Read a single character from stdin.
-        let choice: String = Input::with_theme(&ColorfulTheme::default())
-            .with_prompt("[sync] Your choice (y/n/c)")
-            .validate_with(|s: &String| -> std::result::Result<(), &str> {
-                match s.trim().to_lowercase().as_str() {
-                    "y" | "n" | "c" => Ok(()),
-                    _ => Err("Please enter y, n, or c"),
+            match choice.trim().to_lowercase().as_str() {
+                "y" => return Ok(Some(results[0].id)),
+                "n" => {
+                    println!("  [sync] Skipping MAL sync for this show.");
+                    return Ok(None);
                 }
-            })
-            .interact_text()?;
-
-        match choice.trim().to_lowercase().as_str() {
-            "y" => return Ok(Some(results[0].id)),
-            "n" => {
-                println!("  [sync] Skipping MAL sync for this show.");
-                return Ok(None);
+                _ => {} // "c" — fall through to dropdown
             }
-            _ => {} // "c" — fall through to correction mode
         }
 
         loop {
