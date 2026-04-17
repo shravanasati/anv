@@ -7,9 +7,9 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
-use dialoguer::{Confirm, theme::ColorfulTheme};
+use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use dirs_next::data_dir;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,7 @@ use url::Url;
 
 use crate::config::AppConfig;
 
-use super::{SyncProvider, SyncUpdate};
+use super::{SyncProvider, SyncUpdate, WatchStatus, should_confirm_sync};
 
 const MAL_AUTH_URL: &str = "https://myanimelist.net/v1/oauth2/authorize";
 const MAL_TOKEN_URL: &str = "https://myanimelist.net/v1/oauth2/token";
@@ -156,32 +156,48 @@ pub struct MalClient {
     client_id: String,
     http: Client,
     pub token: MalToken,
+    /// Persistent cache mapping AllAnime show IDs → MAL anime IDs.
+    /// Loaded once when the client is constructed; saved on every new mapping.
+    id_cache: std::sync::Mutex<MalIdCache>,
+    /// Show IDs the user has declined to sync during this session.
+    /// Any show_id in here is silently skipped for the rest of the process.
+    skipped_ids: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl MalClient {
     /// Build a `MalClient` from an existing (possibly expired) token.
     /// Call `MalClient::authenticate` first if no token exists.
-    pub fn from_token(client_id: String, mut token: MalToken) -> Result<Self> {
+    pub async fn from_token(client_id: String, token: MalToken) -> Result<Self> {
         let http = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
             .context("failed to build HTTP client")?;
 
-        if token.is_expired() {
-            token = Self::refresh_token_inner(&http, &client_id, &token.refresh_token)?;
-            token.save()?;
-        }
+        let id_cache = MalIdCache::load().unwrap_or_else(|err| {
+            eprintln!("[sync] Warning: could not load ID cache ({err}), starting fresh.");
+            MalIdCache::default()
+        });
 
-        Ok(Self {
+        let mut client = Self {
             client_id,
             http,
             token,
-        })
+            id_cache: std::sync::Mutex::new(id_cache),
+            skipped_ids: std::sync::Mutex::new(std::collections::HashSet::new()),
+        };
+
+        if client.token.is_expired() {
+            let refresh = client.token.refresh_token.clone();
+            client.token = client.refresh_token_inner(&refresh).await?;
+            client.token.save()?;
+        }
+
+        Ok(client)
     }
 
     /// Full OAuth PKCE flow: opens browser, spins up local callback server,
     /// exchanges code for tokens, and saves them to disk.
-    pub fn authenticate(client_id: &str) -> Result<MalToken> {
+    pub async fn authenticate(client_id: &str) -> Result<MalToken> {
         let verifier = generate_code_verifier();
         let challenge = verifier.clone();
 
@@ -200,8 +216,12 @@ impl MalClient {
         println!("If it doesn't open automatically, visit:\n  {auth_url}");
         let _ = open::that(&auth_url);
 
-        let code =
-            Self::wait_for_callback().context("Failed to receive OAuth callback from browser")?;
+        // The callback listener uses blocking I/O; run it on a blocking thread
+        // so we don't block the async executor.
+        let code = tokio::task::spawn_blocking(Self::wait_for_callback)
+            .await
+            .context("OAuth callback task panicked")?
+            .context("Failed to receive OAuth callback from browser")?;
 
         println!("Authorization code received. Exchanging for token...");
 
@@ -210,7 +230,7 @@ impl MalClient {
             .build()
             .context("failed to build HTTP client")?;
 
-        let token = Self::exchange_code(&http, client_id, &code, &verifier)?;
+        let token = Self::exchange_code(&http, client_id, &code, &verifier).await?;
         token.save()?;
         Ok(token)
     }
@@ -263,7 +283,7 @@ impl MalClient {
         Ok(code)
     }
 
-    fn exchange_code(
+    async fn exchange_code(
         http: &Client,
         client_id: &str,
         code: &str,
@@ -277,19 +297,17 @@ impl MalClient {
             ("redirect_uri", OAUTH_REDIRECT_URI),
         ];
 
-        let rt = tokio::runtime::Handle::current();
-        let resp: TokenResponse = rt.block_on(async {
-            http.post(MAL_TOKEN_URL)
-                .form(&params)
-                .send()
-                .await
-                .context("token exchange request failed")?
-                .error_for_status()
-                .context("MAL returned error on token exchange")?
-                .json::<TokenResponse>()
-                .await
-                .context("failed to parse token response")
-        })?;
+        let resp: TokenResponse = http
+            .post(MAL_TOKEN_URL)
+            .form(&params)
+            .send()
+            .await
+            .context("token exchange request failed")?
+            .error_for_status()
+            .context("MAL returned error on token exchange")?
+            .json::<TokenResponse>()
+            .await
+            .context("failed to parse token response")?;
 
         Ok(MalToken {
             access_token: resp.access_token,
@@ -298,31 +316,25 @@ impl MalClient {
         })
     }
 
-    /// Refresh the access token using the stored client_id, if expired.
-    fn refresh_token_inner(
-        http: &Client,
-        client_id: &str,
-        refresh_token: &str,
-    ) -> Result<MalToken> {
+    async fn refresh_token_inner(&self, refresh_token: &str) -> Result<MalToken> {
         let params = [
-            ("client_id", client_id),
+            ("client_id", self.client_id.as_str()),
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token),
         ];
 
-        let rt = tokio::runtime::Handle::current();
-        let resp: TokenResponse = rt.block_on(async {
-            http.post(MAL_TOKEN_URL)
-                .form(&params)
-                .send()
-                .await
-                .context("token refresh request failed")?
-                .error_for_status()
-                .context("MAL returned error on token refresh")?
-                .json::<TokenResponse>()
-                .await
-                .context("failed to parse refresh token response")
-        })?;
+        let resp: TokenResponse = self
+            .http
+            .post(MAL_TOKEN_URL)
+            .form(&params)
+            .send()
+            .await
+            .context("token refresh request failed")?
+            .error_for_status()
+            .context("MAL returned error on token refresh")?
+            .json::<TokenResponse>()
+            .await
+            .context("failed to parse refresh token response")?;
 
         Ok(MalToken {
             access_token: resp.access_token,
@@ -331,64 +343,184 @@ impl MalClient {
         })
     }
 
-    /// Search MAL for `title`, show the top result (English + Japanese titles)
-    /// and ask the user to confirm it's the right anime.
-    /// Returns `Some(mal_id)` if confirmed, `None` if user declines.
-    pub async fn resolve_and_confirm_mal_id(&self, title: &str) -> Result<Option<u32>> {
-        let resp = self
-            .http
-            .get(format!("{MAL_API_BASE}/anime"))
-            .bearer_auth(&self.token.access_token)
-            .query(&[
-                ("q", title),
-                ("limit", "5"),
-                ("fields", "id,title,alternative_titles"),
-            ])
-            .send()
-            .await
-            .context("MAL anime search request failed")?
-            .error_for_status()
-            .context("MAL returned error on anime search")?
-            .json::<AnimeSearchResponse>()
-            .await
-            .context("failed to parse MAL anime search response")?;
+    // Strips non alphanumeric characters from the title (otherwise leads to 400 from MAL search API)
+    fn sanitize_query(query: &str) -> String {
+        query
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { ' ' })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(64)
+            .collect()
+    }
 
-        let Some(first) = resp.data.into_iter().next() else {
-            println!("  [sync] No MAL results found for \"{title}\". Skipping sync.");
-            return Ok(None);
-        };
+    /// Helper: fetch up to 5 MAL results for `query`.
+    async fn search_mal(&self, query: &str) -> Vec<AnimeDetail> {
+        let sanitized = Self::sanitize_query(query);
+        if sanitized.is_empty() {
+            eprintln!("[sync] MAL search: query is empty after sanitization.");
+            return Vec::new();
+        }
 
-        let detail = first.node;
+        let result = async {
+            let resp = self
+                .http
+                .get(format!("{MAL_API_BASE}/anime"))
+                .bearer_auth(&self.token.access_token)
+                .query(&[
+                    ("q", sanitized.as_str()),
+                    ("limit", "5"),
+                    ("fields", "id,title,alternative_titles"),
+                ])
+                .send()
+                .await
+                .context("MAL anime search request failed")?
+                .error_for_status()
+                .context("MAL returned error on anime search")?
+                .json::<AnimeSearchResponse>()
+                .await
+                .context("failed to parse MAL anime search response")?;
+
+            Ok::<_, anyhow::Error>(resp.data.into_iter().map(|n| n.node).collect::<Vec<_>>())
+        }
+        .await;
+
+        match result {
+            Ok(items) => items,
+            Err(err) => {
+                eprintln!("[sync] MAL search error for \"{sanitized}\": {err:#}");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Format an `AnimeDetail` for display in a menu item.
+    fn format_result(detail: &AnimeDetail) -> String {
         let en = if detail.alternative_titles.en.is_empty() {
             &detail.title
         } else {
             &detail.alternative_titles.en
         };
         let ja = &detail.alternative_titles.ja;
-
-        let display = if ja.is_empty() {
-            format!("\"{}\"", en)
+        if ja.is_empty() {
+            format!("{} [id:{}]", en, detail.id)
         } else {
-            format!("\"{}\" ({})", en, ja)
-        };
+            format!("{} ({}) [id:{}]", en, ja, detail.id)
+        }
+    }
 
-        let confirmed = Confirm::with_theme(&ColorfulTheme::default())
-            .with_prompt(format!(
-                "[sync] Found on MAL: {display}\n  Is this the correct anime?"
-            ))
-            .default(false)
-            .interact()?;
+    /// Search MAL for `title`, present a y/n/c prompt:
+    ///   y – accept first result
+    ///   n – skip sync for this show
+    ///   c – correction mode: shows a dropdown of all results, lets the user
+    ///       pick one, search again with a new query, or skip entirely.
+    ///
+    /// Returns `Some(mal_id)` when resolved, `None` when the user skips.
+    pub async fn resolve_and_confirm_mal_id(&self, title: &str) -> Result<Option<u32>> {
+        let mut results = self.search_mal(title).await;
 
-        if confirmed {
-            Ok(Some(detail.id))
+        if results.is_empty() {
+            // Search failed or yielded nothing (e.g. 400 from MAL). Drop straight
+            // into the dropdown so the user can supply a corrected query or ID.
+            println!("  [sync] No MAL results found for \"{title}\".");
+            println!("         Use 'Search again' or 'Enter MAL ID directly' below.");
         } else {
-            println!("  [sync] Skipping MAL sync for this show.");
-            Ok(None)
+            // Show the best match and ask y / n / c.
+            let best = Self::format_result(&results[0]);
+            println!("[sync] Best MAL match: {best}");
+            println!("       y = accept  |  n = skip  |  c = choose / search again");
+
+            let choice: String = Input::with_theme(&ColorfulTheme::default())
+                .with_prompt("[sync] Your choice (y/n/c)")
+                .validate_with(|s: &String| -> std::result::Result<(), &str> {
+                    match s.trim().to_lowercase().as_str() {
+                        "y" | "n" | "c" => Ok(()),
+                        _ => Err("Please enter y, n, or c"),
+                    }
+                })
+                .interact_text()?;
+
+            match choice.trim().to_lowercase().as_str() {
+                "y" => return Ok(Some(results[0].id)),
+                "n" => {
+                    println!("  [sync] Skipping MAL sync for this show.");
+                    return Ok(None);
+                }
+                _ => {} // "c" — fall through to dropdown
+            }
+        }
+
+        loop {
+            let mut items: Vec<String> = results.iter().map(Self::format_result).collect();
+            items.push("🔍  Search again (new query)".to_string());
+            items.push("🔢  Enter MAL ID directly".to_string());
+            items.push("⏭   Skip (no MAL sync for this show)".to_string());
+
+            let idx = Select::with_theme(&ColorfulTheme::default())
+                .with_prompt("[sync] Select the correct anime or choose an action")
+                .items(&items)
+                .default(0)
+                .interact()?;
+
+            let skip_idx = items.len() - 1;
+            let manual_idx = items.len() - 2;
+            let search_idx = items.len() - 3;
+
+            if idx == skip_idx {
+                println!("  [sync] Skipping MAL sync for this show.");
+                return Ok(None);
+            }
+
+            if idx == manual_idx {
+                let id: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("[sync] Enter MAL anime ID (numeric)")
+                    .validate_with(|s: &String| -> std::result::Result<(), &str> {
+                        match s.trim().parse::<u32>() {
+                            Ok(n) if n > 0 => Ok(()),
+                            _ => Err("Please enter a valid non-zero MAL ID"),
+                        }
+                    })
+                    .interact_text()?;
+                return Ok(Some(id.trim().parse::<u32>().unwrap()));
+            }
+
+            if idx == search_idx {
+                let new_query: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("[sync] Enter new search query")
+                    .interact_text()?;
+
+                let new_results = self.search_mal(new_query.trim()).await;
+                if new_results.is_empty() {
+                    println!(
+                        "  [sync] No results found for \"{new_query}\". Try a different query."
+                    );
+                } else {
+                    results = new_results;
+                }
+                continue;
+            }
+
+            // User picked one of the actual results.
+            return Ok(Some(results[idx].id));
         }
     }
 
     /// Update MAL anime list status.
     async fn update_list_status(&self, mal_id: u32, update: &SyncUpdate) -> Result<()> {
+        let total = update
+            .total_episodes
+            .map_or_else(|| "?".to_string(), |n| n.to_string());
+        println!(
+            "[sync] Posting update for \"{}\" — ep {}/{} ({})",
+            update.title,
+            update.episode,
+            total,
+            update.status.label()
+        );
+
         let mut form: HashMap<&str, String> = HashMap::new();
         form.insert("status", update.status.as_str().to_string());
         form.insert("num_watched_episodes", update.episode.to_string());
@@ -417,24 +549,12 @@ impl MalClient {
 }
 
 impl SyncProvider for MalClient {
-    fn name(&self) -> &'static str {
-        "MyAnimeList"
-    }
-
-    async fn update_status(&self, _update: &SyncUpdate) -> Result<()> {
-        // MAL requires a resolved MAL ID which isn't embedded in SyncUpdate.
-        // Use MalClient::update_status_with_id instead.
-        bail!("Use update_status_with_id for MAL sync")
+    async fn sync_episode(&self, show_id: &str, show_title: &str, ep_num: u32) -> Result<()> {
+        self.do_sync_episode(show_id, show_title, ep_num).await
     }
 }
 
 impl MalClient {
-    /// The real sync entry point used by the anime playback loop.
-    /// Caller must supply the resolved MAL ID.
-    pub async fn update_status_with_id(&self, mal_id: u32, update: &SyncUpdate) -> Result<()> {
-        self.update_list_status(mal_id, update).await
-    }
-
     /// Fetch the anime's list status and planned episode count in one request.
     ///
     /// `anime_info.num_episodes == 0` means MAL doesn't know the total yet
@@ -467,6 +587,165 @@ impl MalClient {
             num_episodes: resp.num_episodes,
         })
     }
+
+    /// Full sync flow for one episode. Resolves the MAL ID (from internal cache
+    /// or via search + user confirmation), checks current remote state, skips
+    /// if MAL already tracks at least this episode, prompts the user when the
+    /// status is changing, and posts the patch request.
+    async fn do_sync_episode(&self, show_id: &str, show_title: &str, ep_num: u32) -> Result<()> {
+        // 1. Resolve MAL ID — check internal cache first.
+        if self.skipped_ids.lock().unwrap().contains(show_id) {
+            return Ok(()); // user already declined this show this session
+        }
+        let cached_id = self.id_cache.lock().unwrap().get(show_id);
+        let mal_id = if let Some(id) = cached_id {
+            id
+        } else {
+            match self.resolve_and_confirm_mal_id(show_title).await {
+                Ok(Some(id)) => {
+                    if let Err(err) = self.id_cache.lock().unwrap().insert_and_save(show_id, id) {
+                        eprintln!("[sync] Warning: could not save ID cache: {err}");
+                    }
+                    id
+                }
+                Ok(None) => {
+                    self.skipped_ids.lock().unwrap().insert(show_id.to_string());
+                    return Ok(());
+                }
+                Err(err) => {
+                    eprintln!("[sync] MAL ID resolution failed: {err}");
+                    return Ok(());
+                }
+            }
+        };
+
+        // 2. Fetch current remote state.
+        let anime_info = self.get_anime_info(mal_id).await.unwrap_or_else(|err| {
+            eprintln!("[sync] Warning: could not fetch anime info ({err}), assuming Watching.");
+            AnimeInfo {
+                list_status: None,
+                num_episodes: 0,
+            }
+        });
+        let current = anime_info.list_status;
+
+        // 3. Skip if MAL already records at least this episode.
+        if let Some(ref status) = current {
+            if status.num_episodes_watched >= ep_num {
+                println!(
+                    "[sync] MAL already at ep {} for \"{}\" — skipping update.",
+                    status.num_episodes_watched, show_title
+                );
+                return Ok(());
+            }
+        }
+
+        // 4. Determine new watch status.
+        //    Never auto-complete when MAL doesn't know the total (num_episodes == 0).
+        let new_status = if anime_info.num_episodes > 0 && ep_num >= anime_info.num_episodes {
+            WatchStatus::Completed
+        } else {
+            WatchStatus::Watching
+        };
+
+        // 5. Confirm with the user if the status is changing.
+        let needs_confirm = should_confirm_sync(&current, new_status);
+        let should_update = if needs_confirm {
+            Confirm::with_theme(&ColorfulTheme::default())
+                .with_prompt(format!(
+                    "[sync] Update MAL: \"{}\" ep {} → {}?",
+                    show_title,
+                    ep_num,
+                    new_status.label()
+                ))
+                .default(false)
+                .interact()
+                .unwrap_or(false)
+        } else {
+            true
+        };
+
+        if !should_update {
+            println!("[sync] Skipped MAL update for \"{}\".", show_title);
+            return Ok(());
+        }
+
+        // 6. Build dates.
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let is_first_start = new_status == WatchStatus::Watching
+            && match &current {
+                None => true,
+                Some(cur) => cur.status == "plan_to_watch",
+            };
+        let start_date = if is_first_start {
+            Some(today.clone())
+        } else {
+            None
+        };
+        let finish_date = if new_status == WatchStatus::Completed {
+            Some(today)
+        } else {
+            None
+        };
+
+        // 7. Prompt for a score when completing.
+        let score: Option<u8> = if new_status == WatchStatus::Completed {
+            let mut opts: Vec<String> = (1u8..=10).map(|n| format!("{}/10", n)).collect();
+            opts.push("Skip (no rating)".to_string());
+            let idx = Select::with_theme(&ColorfulTheme::default())
+                .with_prompt(format!("Rate \"{}\" on MAL (Esc to skip)", show_title))
+                .items(&opts)
+                .default(opts.len() - 1)
+                .interact_opt()?;
+            match idx {
+                Some(i) if i < 10 => Some(i as u8 + 1),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        // 8. Post the update.
+        let update = SyncUpdate {
+            title: show_title.to_string(),
+            episode: ep_num,
+            total_episodes: if anime_info.num_episodes > 0 {
+                Some(anime_info.num_episodes)
+            } else {
+                None
+            },
+            status: new_status,
+            start_date,
+            finish_date,
+            score,
+        };
+
+        match self.update_list_status(mal_id, &update).await {
+            Ok(()) => {
+                if needs_confirm {
+                    println!(
+                        "[sync] MAL updated: \"{}\" ep {} → {}",
+                        show_title,
+                        ep_num,
+                        new_status.label()
+                    );
+                } else {
+                    println!(
+                        "[sync] MAL progress saved: \"{}\" ep {}",
+                        show_title, ep_num
+                    );
+                }
+                if let Some(score_val) = score {
+                    println!("[sync] MAL score submitted: {}/10", score_val);
+                } else if new_status == WatchStatus::Completed {
+                    println!("[sync] Rating skipped.");
+                }
+            }
+            Err(err) => eprintln!("[sync] Failed to update MAL: {err}"),
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -484,7 +763,7 @@ pub struct AnimeInfo {
 }
 
 /// Build a MalClient only when sync is enabled and a stored token exists.
-pub fn build_mal_client_if_enabled(cfg: &AppConfig) -> Option<MalClient> {
+pub async fn build_mal_client_if_enabled(cfg: &AppConfig) -> Option<MalClient> {
     if !cfg.sync.enabled {
         return None;
     }
@@ -493,7 +772,7 @@ pub fn build_mal_client_if_enabled(cfg: &AppConfig) -> Option<MalClient> {
         return None;
     }
     match MalToken::load() {
-        Ok(Some(token)) => match MalClient::from_token(cfg.mal.client_id.clone(), token) {
+        Ok(Some(token)) => match MalClient::from_token(cfg.mal.client_id.clone(), token).await {
             Ok(client) => Some(client),
             Err(err) => {
                 eprintln!("[sync] Failed to initialize MAL client: {err}");
