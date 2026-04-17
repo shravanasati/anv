@@ -1,6 +1,11 @@
-use anyhow::{Context, Result, anyhow, bail};
+use aes::Aes256;
+use anyhow::{Result, anyhow, bail};
+use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+use ctr::Ctr32BE;
+use ctr::cipher::{KeyIvInit, StreamCipher};
 use reqwest::Client;
 use serde::{Deserialize, de::DeserializeOwned};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 use super::{AnimeProvider, MangaProvider, USER_AGENT};
@@ -41,8 +46,29 @@ impl AllAnimeClient {
         if !status.is_success() {
             bail!("AllAnime API HTTP {status}: {text}");
         }
-        let envelope: GraphQlEnvelope<T> =
-            serde_json::from_str(&text).context("failed to parse AllAnime API response")?;
+        if std::env::var("ANV_DEBUG").is_ok() {
+            eprintln!("[AllAnime] HTTP {status} — raw response:\n{text}");
+        }
+        // AllAnime now AES-256-CTR-encrypts responses; detect and unwrap.
+        let json_str: std::borrow::Cow<str> = if text.contains("\"tobeparsed\"") {
+            let enc: EncryptedEnvelope = serde_json::from_str(&text).map_err(|e| {
+                anyhow!("failed to parse encrypted AllAnime envelope: {e}\nRaw:\n{text}")
+            })?;
+            let plaintext = decrypt_tobeparsed(&enc.data.tobeparsed)?;
+            if std::env::var("ANV_DEBUG").is_ok() {
+                eprintln!("[AllAnime] decrypted tobeparsed plaintext:\n{plaintext}");
+            }
+            // The plaintext is the inner data object; wrap it so it matches
+            // GraphQlEnvelope<T> which expects {"data": {...}}.
+            std::borrow::Cow::Owned(format!(r#"{{"data":{plaintext}}}"#))
+        } else {
+            std::borrow::Cow::Borrowed(&text)
+        };
+        let envelope: GraphQlEnvelope<T> = serde_json::from_str(&json_str).map_err(|e| {
+            anyhow!(
+                "failed to parse AllAnime API response: {e}\nJSON:\n{json_str}"
+            )
+        })?;
         Self::extract_data(envelope)
     }
 
@@ -356,6 +382,55 @@ fn decode_pair(pair: &str) -> Option<char> {
     let ch = (byte ^ 0x38) as char;
     // Only emit printable (graphic) ASCII — control characters have no place in URLs.
     ch.is_ascii_graphic().then_some(ch)
+}
+
+/// Decrypts the `tobeparsed` blob returned by the AllAnime API.
+///
+/// The encryption scheme (reverse-engineered from the ani-cli fix):
+/// - Key  = SHA-256("SimtVuagFbGR2K7P")
+/// - blob = base64( nonce[12] || ciphertext || tag[16] )
+/// - CTR  = AES-256-CTR, IV = nonce[0..12] ++ 0x00_00_00_02  (big-endian counter starting at 2)
+fn decrypt_tobeparsed(blob: &str) -> Result<String> {
+    // Derive key: SHA-256 of the hardcoded passphrase.
+    let key = Sha256::digest(b"SimtVuagFbGR2K7P");
+
+    // Decode the base64 blob.
+    let raw = B64.decode(blob).map_err(|e| anyhow!("tobeparsed base64 decode failed: {e}"))?;
+    if raw.len() < 12 + 16 {
+        bail!("tobeparsed blob too short ({} bytes)", raw.len());
+    }
+
+    // Layout: [12-byte nonce][ciphertext][16-byte GCM auth tag]
+    let nonce = &raw[..12];
+    let ciphertext = &raw[12..raw.len() - 16];
+
+    // Build the 128-bit CTR IV: nonce (96 bits) || counter=2 (32 bits, big-endian).
+    let mut iv = [0u8; 16];
+    iv[..12].copy_from_slice(nonce);
+    iv[12] = 0x00;
+    iv[13] = 0x00;
+    iv[14] = 0x00;
+    iv[15] = 0x02;
+
+    // Decrypt in-place with AES-256-CTR.
+    let mut plaintext = ciphertext.to_vec();
+    let key_arr: &[u8; 32] = key.as_ref();
+    let mut cipher = Ctr32BE::<Aes256>::new(key_arr.into(), &iv.into());
+    cipher.apply_keystream(&mut plaintext);
+
+    String::from_utf8(plaintext)
+        .map_err(|e| anyhow!("tobeparsed plaintext is not valid UTF-8: {e}"))
+}
+
+/// Wrapper for the encrypted envelope: `{"data": {"_m": "...", "tobeparsed": "<base64>"}}`
+#[derive(Debug, Deserialize)]
+struct EncryptedEnvelope {
+    data: EncryptedData,
+}
+
+#[derive(Debug, Deserialize)]
+struct EncryptedData {
+    tobeparsed: String,
 }
 
 #[derive(Debug, Deserialize)]

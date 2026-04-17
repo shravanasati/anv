@@ -5,6 +5,9 @@ use crate::sync::mal::CurrentListStatus;
 pub mod mal;
 
 /// Possible watch statuses mirroring MAL's status field.
+/// All variants are kept to model the full MAL API surface, even if only
+/// `Watching` and `Completed` are produced locally right now.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WatchStatus {
     Watching,
@@ -56,12 +59,18 @@ pub struct SyncUpdate {
 
 /// Common interface for list-sync providers (MAL, AniList, etc.).
 pub trait SyncProvider: Send + Sync {
-    fn name(&self) -> &'static str;
-    /// Update the watch status.  The caller is responsible for
-    /// user-confirmation *before* calling this.
-    fn update_status(
+    /// Full one-episode sync: resolve the provider's list ID, check current
+    /// remote state, prompt the user when confirmation is needed, and post
+    /// the update.  Called once after each episode finishes playing.
+    ///
+    /// * `show_id`    — the local provider ID (e.g. AllAnime show ID)
+    /// * `show_title` — human-readable title used in prompts and log lines
+    /// * `ep_num`     — 1-based episode number just finished
+    fn sync_episode(
         &self,
-        update: &SyncUpdate,
+        show_id: &str,
+        show_title: &str,
+        ep_num: u32,
     ) -> impl std::future::Future<Output = Result<()>> + Send;
 }
 
