@@ -1,4 +1,7 @@
-![logo.png](./assets/logo.png)
+
+<p align="center">
+ <img src="./assets/logo.png" width=225 height=200>
+</p>
 
 anv is a terminal-native anime launcher for people who think tmux panes and watchlists belong together. Point it at a title, pick your episode, and drop straight into `mpv` without touching a browser tab.
 
@@ -15,17 +18,31 @@ anv is a terminal-native anime launcher for people who think tmux panes and watc
 
 ## Install it
 
-### Cargo (recommended)
+### Install prebuilt binaries via shell script
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/shravanasati/anv/releases/latest/download/anv-installer.sh \
+| sed 's/Vedant-Asati03/shravanasati/g' \
+| sh
+```
+
+### Install prebuilt binaries via powershell script
+
+```sh
+powershell -ExecutionPolicy Bypass -c "(irm https://github.com/shravanasati/anv/releases/latest/download/anv-installer.ps1) -replace 'Vedant-Asati03','shravanasati' | iex"
+```
+
+### Install via GitHub Releases
+
+Pre-built binaries for all platforms are available on [GitHub Releases](https://github.com/shravanasati/anv/releases).
+
+
+### Cargo
 ```bash
 cargo install anv
 ```
 
-### From source
-```bash
-git clone https://github.com/Vedant-Asati03/anv.git
-cd anv
-cargo install --path .
-```
+
 
 ## Quick start quests
 
@@ -57,6 +74,11 @@ anv history
 Jump directly to an episode:
 ```bash
 anv -e 12 "bocchi the rock"
+```
+
+Watch in binge mode (automatically play subsequent episodes):
+```bash
+anv -e 1 -b "bocchi the rock"
 ```
 
 Set a custom player (e.g. tuned mpv build):
