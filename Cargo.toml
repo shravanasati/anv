@@ -1,10 +1,10 @@
 [package]
 name = "anv"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/Vedant-Asati03/anv"
+repository = "https://github.com/shravanasati/anv"
 description = "Stream anime or read manga from AllAnime straight into mpv from your terminal."
 keywords = ["anime", "cli", "streaming", "mpv"]
 categories = ["command-line-utilities", "multimedia::video"]

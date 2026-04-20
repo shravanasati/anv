@@ -37,7 +37,7 @@ fn default_player() -> String {
 }
 
 const CONFIG_HEADER: &str = "# anv configuration
-# Docs: https://github.com/Vedant-Asati03/anv
+# Docs: https://github.com/shravanasati/anv
 #
 # player — media player command (default: \"mpv\")
 #           also overridable with ANV_PLAYER env var

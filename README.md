@@ -15,21 +15,20 @@ anv is a terminal-native anime launcher for people who think tmux panes and watc
 - Jump directly to an episode with `-e` or `--episode` to skip the selection menu.
 - Fires up `mpv` (or whatever you set as `player` in config) with the highest-quality stream it can negotiate.
 - Syncs watch progress to MyAnimeList – sets start/finish dates, marks completed automatically.
+- Browse your MAL **Plan to Watch** list with `anv watchlist` and start streaming in one step – no separate search needed.
 
 ## Install it
 
 ### Install prebuilt binaries via shell script
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/shravanasati/anv/releases/latest/download/anv-installer.sh \
-| sed 's/Vedant-Asati03/shravanasati/g' \
-| sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/shravanasati/anv/releases/latest/download/anv-installer.sh | sh
 ```
 
 ### Install prebuilt binaries via powershell script
 
 ```sh
-powershell -ExecutionPolicy Bypass -c "(irm https://github.com/shravanasati/anv/releases/latest/download/anv-installer.ps1) -replace 'Vedant-Asati03','shravanasati' | iex"
+powershell -ExecutionPolicy Bypass -c "(irm https://github.com/shravanasati/anv/releases/latest/download/anv-installer.ps1) | iex"
 ```
 
 ### Install via GitHub Releases
@@ -41,8 +40,6 @@ Pre-built binaries for all platforms are available on [GitHub Releases](https://
 ```bash
 cargo install anv
 ```
-
-
 
 ## Quick start quests
 
@@ -79,6 +76,16 @@ anv -e 12 "bocchi the rock"
 Watch in binge mode (automatically play subsequent episodes):
 ```bash
 anv -e 1 -b "bocchi the rock"
+```
+
+Pick from your MAL Plan to Watch list and stream:
+```bash
+anv watchlist
+```
+
+Same, but start dubbed and jump to episode 1:
+```bash
+anv watchlist -d -e 1
 ```
 
 Set a custom player (e.g. tuned mpv build):
@@ -133,6 +140,19 @@ This opens your browser to the MAL authorisation page. After you approve, the to
 | `anv sync status` | Show whether sync is enabled, token validity, and expiry |
 | `anv sync disable` | Disable sync (`sync.enabled = false` in config) |
 
+### Watchlist
+
+`anv watchlist` pulls your **Plan to Watch** list directly from MAL and lets you pick a title to stream — no search step required.
+
+```bash
+anv watchlist          # sub (default)
+anv watchlist -d       # dubbed
+anv watchlist -b       # binge mode
+anv watchlist -e 5     # start at episode 5
+```
+
+**What it shows:** only titles that are currently airing or have finished airing. Anime that hasn't premiered yet (`not_yet_aired`) is automatically hidden so the list stays actionable. Each entry shows an episode count and a `· airing` or `· finished` tag.
+
 ### How sync works
 
 After each episode finishes playing:
@@ -159,6 +179,7 @@ After each episode finishes playing:
 - Use `-e <EP>` to skip the interactive episode selector and start playing a specific episode immediately.
 - Use `cargo install anv --force` to update when new AllAnime quirks pop up.
 - Run `anv sync status` to quickly check if your MAL token is still valid before a long watch session.
+- `anv watchlist` is the fastest path from "what should I watch?" to actually watching it — the MAL→AllAnime mapping is cached after the first run, so subsequent launches are instant.
 
 ## Troubleshooting
 - `mpv` not found: install it or set `player` in your config (or `ANV_PLAYER` env var).

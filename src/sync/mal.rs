@@ -98,6 +98,15 @@ impl MalIdCache {
         self.entries.get(allanime_id).copied()
     }
 
+    /// Reverse lookup: given a MAL anime ID, return the AllAnime show ID if it
+    /// was previously cached 
+    pub fn get_allanime_id(&self, mal_id: u32) -> Option<String> {
+        self.entries
+            .iter()
+            .find(|(_, v)| **v == mal_id)
+            .map(|(k, _)| k.clone())
+    }
+
     pub fn insert_and_save(&mut self, allanime_id: &str, mal_id: u32) -> Result<()> {
         self.entries.insert(allanime_id.to_string(), mal_id);
         let path = Self::cache_path()?;
@@ -124,6 +133,45 @@ struct TokenResponse {
     access_token: String,
     refresh_token: String,
     expires_in: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct MalWatchlistEntry {
+    pub mal_id: u32,
+    pub title: String,
+    /// MAL's planned total. `0` means still airing / unknown.
+    pub num_episodes: u32,
+    /// Airing status: `"finished_airing"`, `"currently_airing"`, or `"not_yet_aired"`.
+    pub airing_status: String,
+}
+
+
+#[derive(Debug, Deserialize)]
+struct AnimelistResponse {
+    data: Vec<AnimelistNode>,
+    #[serde(default)]
+    paging: AnimelistPaging,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnimelistNode {
+    node: AnimelistDetail,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnimelistDetail {
+    id: u32,
+    title: String,
+    #[serde(default)]
+    num_episodes: u32,
+    #[serde(default)]
+    status: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AnimelistPaging {
+    #[serde(default)]
+    next: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -586,6 +634,61 @@ impl MalClient {
             list_status: resp.my_list_status,
             num_episodes: resp.num_episodes,
         })
+    }
+
+    /// Fetch all anime with `plan_to_watch` status from the authenticated user's MAL list.
+    pub async fn fetch_plan_to_watch(&self) -> Result<Vec<MalWatchlistEntry>> {
+        let mut entries: Vec<MalWatchlistEntry> = Vec::new();
+        let mut next_url: Option<String> = Some(format!(
+            "{MAL_API_BASE}/users/@me/animelist?status=plan_to_watch&limit=100&fields=num_episodes,status"
+        ));
+
+        while let Some(url) = next_url {
+            let resp: AnimelistResponse = self
+                .http
+                .get(&url)
+                .bearer_auth(&self.token.access_token)
+                .send()
+                .await
+                .context("MAL animelist request failed")?
+                .error_for_status()
+                .context("MAL returned error fetching animelist")?
+                .json::<AnimelistResponse>()
+                .await
+                .context("failed to parse MAL animelist response")?;
+
+            for node in resp.data {
+                // Skip titles that haven't started airing yet.
+                if node.node.status == "not_yet_aired" {
+                    continue;
+                }
+                entries.push(MalWatchlistEntry {
+                    mal_id: node.node.id,
+                    title: node.node.title,
+                    num_episodes: node.node.num_episodes,
+                    airing_status: node.node.status,
+                });
+            }
+
+            next_url = resp.paging.next;
+        }
+
+        Ok(entries)
+    }
+
+    pub fn cached_allanime_id(&self, mal_id: u32) -> Option<String> {
+        self.id_cache.lock().unwrap().get_allanime_id(mal_id)
+    }
+
+    pub fn cache_allanime_id(&self, allanime_id: &str, mal_id: u32) {
+        if let Err(err) = self
+            .id_cache
+            .lock()
+            .unwrap()
+            .insert_and_save(allanime_id, mal_id)
+        {
+            eprintln!("[watchlist] Warning: could not save ID cache: {err}");
+        }
     }
 
     /// Full sync flow for one episode. Resolves the MAL ID (from internal cache
