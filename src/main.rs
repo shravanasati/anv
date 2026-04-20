@@ -28,7 +28,7 @@ use providers::{
 };
 use sync::{
     SyncProvider,
-    mal::{MalClient, MalToken, build_mal_client_if_enabled},
+    mal::{MalClient, MalToken, MalWatchlistEntry, build_mal_client_if_enabled},
 };
 use types::{ChapterCounts, EpisodeCounts, MangaInfo, Provider, ShowInfo, Translation};
 
@@ -93,6 +93,22 @@ enum Commands {
         binge: bool,
     },
 
+    /// Browse your MAL "Plan to Watch" list and start streaming.
+    /// Requires MAL sync to be configured (`anv sync enable mal`).
+    Watchlist {
+        /// Automatically play the next episode without prompting (binge mode).
+        #[arg(short = 'b', long)]
+        binge: bool,
+
+        /// Play dubbed audio instead of the default subtitled version.
+        #[arg(short = 'd', long)]
+        dub: bool,
+
+        /// Start playback from a specific episode number.
+        #[arg(short = 'e', long, value_name = "EPISODE")]
+        episode: Option<String>,
+    },
+
     /// Manage sync with external anime list services (e.g. MyAnimeList).
     Sync {
         #[command(subcommand)]
@@ -152,6 +168,36 @@ async fn run() -> Result<()> {
                 binge,
             )
             .await;
+        }
+        Some(Commands::Watchlist { binge: wl_binge, dub: wl_dub, episode: wl_episode }) => {
+            let history_path = history_path()?;
+            let mut history = History::load(&history_path)?;
+            let mal_client = build_mal_client_if_enabled(&cfg).await;
+            let binge = *wl_binge || cli.binge || cfg.binge;
+            let translation = if *wl_dub || cli.dub { Translation::Dub } else { Translation::Sub };
+            let episode = wl_episode.clone().or_else(|| cli.episode.clone());
+            return match mal_client.as_ref() {
+                None => {
+                    eprintln!(
+                        "error: MAL sync is not configured.\n\
+                         Run `anv sync enable mal` to authenticate, then set\n\
+                         `sync.enabled = true` in your config."
+                    );
+                    Ok(())
+                }
+                Some(client) => {
+                    run_watchlist(
+                        translation,
+                        binge,
+                        episode,
+                        &mut history,
+                        &history_path,
+                        cfg.player.clone(),
+                        client,
+                    )
+                    .await
+                }
+            };
         }
         Some(Commands::Sync {
             action:
@@ -220,6 +266,152 @@ async fn run() -> Result<()> {
         binge,
     )
     .await
+}
+
+/// `anv watchlist` — browse the user's MAL "Plan to Watch" list and stream a chosen show.
+async fn run_watchlist(
+    translation: Translation,
+    binge: bool,
+    episode: Option<String>,
+    history: &mut History,
+    history_path: &Path,
+    player: String,
+    mal_client: &MalClient,
+) -> Result<()> {
+    println!("Fetching your MAL 'Plan to Watch' list...");
+    let watchlist = mal_client.fetch_plan_to_watch().await?;
+
+    if watchlist.is_empty() {
+        println!("Your MAL 'Plan to Watch' list is empty.");
+        return Ok(());
+    }
+
+    let allanime = AllAnimeClient::new()?;
+    let theme = theme();
+
+    // Outer loop — redisplay the watchlist dropdown after a failed (Esc)
+    // disambiguation attempt so the user can pick a different show.
+    loop {
+        let items: Vec<String> = watchlist
+            .iter()
+            .map(|e| {
+                let ep_count = if e.num_episodes == 0 {
+                    "? ep".to_string()
+                } else {
+                    format!("{} ep", e.num_episodes)
+                };
+                let status_tag = match e.airing_status.as_str() {
+                    "currently_airing" => " · airing",
+                    "finished_airing"  => " · finished",
+                    _                  => "",
+                };
+                format!("{} [{}{}]", e.title, ep_count, status_tag)
+            })
+            .collect();
+
+        let selection = dialoguer::FuzzySelect::with_theme(&theme)
+            .with_prompt("Plan to Watch (type to search, Esc to cancel)")
+            .items(&items)
+            .default(0)
+            .interact_opt()?;
+
+        let Some(idx) = selection else {
+            println!("Cancelled.");
+            return Ok(());
+        };
+
+        let entry: &MalWatchlistEntry = &watchlist[idx];
+
+        // --- Resolve AllAnime show_id ---
+        // 1. Check existing MalIdCache via runtime inversion.
+        let cached_allanime_id = mal_client.cached_allanime_id(entry.mal_id);
+
+        let allanime_id = if let Some(id) = cached_allanime_id {
+            id
+        } else {
+            // 2. Search AllAnime by title.
+            println!("Searching AllAnime for \"{}\"...", entry.title);
+            let results = allanime.search_shows(&entry.title, translation).await?;
+
+            match results.len() {
+                0 => {
+                    // No results — prompt for a corrected query, then retry.
+                    println!("No AllAnime results for \"{}\". Try a different search query (or Esc to go back).", entry.title);
+                    let query: String = dialoguer::Input::with_theme(&theme)
+                        .with_prompt("Search query")
+                        .allow_empty(true)
+                        .interact_text()?;
+                    if query.trim().is_empty() {
+                        // loop back to watchlist
+                        continue;
+                    }
+                    let retry = allanime.search_shows(query.trim(), translation).await?;
+                    if retry.is_empty() {
+                        println!("Still no results. Going back to watchlist.");
+                        continue;
+                    }
+                    // Pick from retry results.
+                    let opts: Vec<String> = retry
+                        .iter()
+                        .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
+                        .collect();
+                    let pick = dialoguer::Select::with_theme(&theme)
+                        .with_prompt(format!("Which AllAnime entry matches \"{}\"? (Esc = back)", entry.title))
+                        .items(&opts)
+                        .default(0)
+                        .interact_opt()?;
+                    let Some(i) = pick else { continue };
+                    let chosen = &retry[i];
+                    mal_client.cache_allanime_id(&chosen.id, entry.mal_id);
+                    chosen.id.clone()
+                }
+                1 => {
+                    // Unambiguous — store and proceed.
+                    mal_client.cache_allanime_id(&results[0].id, entry.mal_id);
+                    results[0].id.clone()
+                }
+                _ => {
+                    // Multiple results — show disambiguation dropdown.
+                    let opts: Vec<String> = results
+                        .iter()
+                        .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
+                        .collect();
+                    let pick = dialoguer::Select::with_theme(&theme)
+                        .with_prompt(format!("Which AllAnime entry matches \"{}\"? (Esc = back)", entry.title))
+                        .items(&opts)
+                        .default(0)
+                        .interact_opt()?;
+                    let Some(i) = pick else {
+                        // User pressed Esc — loop back to the watchlist.
+                        continue;
+                    };
+                    let chosen = &results[i];
+                    mal_client.cache_allanime_id(&chosen.id, entry.mal_id);
+                    chosen.id.clone()
+                }
+            }
+        };
+
+        let show = ShowInfo {
+            id: allanime_id,
+            title: entry.title.clone(),
+            available_eps: EpisodeCounts::default(),
+        };
+
+        return play_show(
+            &allanime,
+            history,
+            history_path,
+            translation,
+            Provider::Allanime,
+            show,
+            episode.clone(),
+            &player,
+            Some(mal_client),
+            binge,
+        )
+        .await;
+    }
 }
 
 /// `anv sync enable mal` — authenticates with MAL if needed.
