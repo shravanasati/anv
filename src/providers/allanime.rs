@@ -386,33 +386,26 @@ fn decode_pair(pair: &str) -> Option<char> {
 
 /// Decrypts the `tobeparsed` blob returned by the AllAnime API.
 ///
-/// The encryption scheme (reverse-engineered from the ani-cli fix):
-/// - Key  = SHA-256("SimtVuagFbGR2K7P")
-/// - blob = base64( nonce[12] || ciphertext || tag[16] )
-/// - CTR  = AES-256-CTR, IV = nonce[0..12] ++ 0x00_00_00_02  (big-endian counter starting at 2)
+/// Layout (as of PR #1667): `base64( prefix[1] || nonce[12] || ciphertext || tag[16] )`
+/// - Key = SHA-256("Xot36i3lK3:v1")
+/// - CTR IV = nonce[0..12] ++ 0x00_00_00_02
 fn decrypt_tobeparsed(blob: &str) -> Result<String> {
-    // Derive key: SHA-256 of the hardcoded passphrase.
-    let key = Sha256::digest(b"SimtVuagFbGR2K7P");
+    let key = Sha256::digest(b"Xot36i3lK3:v1");
 
-    // Decode the base64 blob.
     let raw = B64.decode(blob).map_err(|e| anyhow!("tobeparsed base64 decode failed: {e}"))?;
-    if raw.len() < 12 + 16 {
+    // Layout: [1-byte prefix][12-byte nonce][ciphertext][16-byte GCM tag]
+    if raw.len() < 1 + 12 + 16 {
         bail!("tobeparsed blob too short ({} bytes)", raw.len());
     }
 
-    // Layout: [12-byte nonce][ciphertext][16-byte GCM auth tag]
-    let nonce = &raw[..12];
-    let ciphertext = &raw[12..raw.len() - 16];
+    let nonce = &raw[1..13];
+    let ciphertext = &raw[13..raw.len() - 16];
 
     // Build the 128-bit CTR IV: nonce (96 bits) || counter=2 (32 bits, big-endian).
     let mut iv = [0u8; 16];
     iv[..12].copy_from_slice(nonce);
-    iv[12] = 0x00;
-    iv[13] = 0x00;
-    iv[14] = 0x00;
     iv[15] = 0x02;
 
-    // Decrypt in-place with AES-256-CTR.
     let mut plaintext = ciphertext.to_vec();
     let key_arr: &[u8; 32] = key.as_ref();
     let mut cipher = Ctr32BE::<Aes256>::new(key_arr.into(), &iv.into());
