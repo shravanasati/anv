@@ -41,6 +41,17 @@ Pre-built binaries for all platforms are available on [GitHub Releases](https://
 cargo install anv
 ```
 
+### Updating
+
+The installer ships an `anv-update` binary alongside `anv`. Run it any time you want the latest release:
+
+```sh
+anv-update
+```
+
+> **Note:** If something breaks or streams stop working, run `anv-update` first before raising an issue — most provider-related breakages are fixed in patch releases.
+
+
 ## Quick start quests
 
 Search and stream:
@@ -177,13 +188,16 @@ After each episode finishes playing:
 - If you want to experiment with custom players, set `player` in `~/.config/anv/config.toml` or use the `ANV_PLAYER` environment variable (env overrides config).
 - Use `--cache-dir <DIR>` if you want manga page cache files somewhere specific (faster disk, larger partition, etc.).
 - Use `-e <EP>` to skip the interactive episode selector and start playing a specific episode immediately.
-- Use `cargo install anv --force` to update when new AllAnime quirks pop up.
+- Run `anv-update` to pull the latest release whenever streams break or a new AllAnime quirk surfaces.
 - Run `anv sync status` to quickly check if your MAL token is still valid before a long watch session.
 - `anv watchlist` is the fastest path from "what should I watch?" to actually watching it — the MAL→AllAnime mapping is cached after the first run, so subsequent launches are instant.
 
 ## Troubleshooting
+
+> **First step for any breakage:** run `anv-update` to make sure you are on the latest release before raising an issue. Most provider and stream failures are already fixed in the newest version.
+
 - `mpv` not found: install it or set `player` in your config (or `ANV_PLAYER` env var).
-- Streams empty: AllAnime occasionally throttles or shuffles providers; try again later or update anv.
+- Streams empty: AllAnime occasionally throttles or shuffles providers; run `anv-update`, then try again.
 - History file corrupted: delete the JSON under your data dir and anv recreates it on launch.
 - MAL sync not working: run `anv sync status` to check token state, then `anv sync enable mal` to re-authenticate if needed.
 
