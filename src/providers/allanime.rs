@@ -18,6 +18,10 @@ const ALLANIME_BASE_URL: &str = "https://allanime.day";
 const ALLANIME_REFERER: &str = "https://allmanga.to";
 const ALLANIME_IMAGE_REFERER: &str = "https://allanime.to";
 const ALLANIME_ORIGIN: &str = "https://allanime.day";
+// Providers known to yield direct HLS/MP4 URLs via the clock.json mechanism.
+// The remaining providers (Ok, Vg, Fm-Hls, Mp4, Sw, …) are JS-obfuscated iframe
+// embeds that require per-provider HTML/JS scraping to extract a playable URL —
+// not currently implemented. Luf-Mp4 and Yt-mp4 cover the vast majority of shows.
 const PREFERRED_PROVIDERS: &[&str] = &["Default", "S-mp4", "Luf-Mp4", "Yt-mp4"];
 
 pub struct AllAnimeClient {
@@ -201,27 +205,121 @@ impl AnimeProvider for AllAnimeClient {
             .fetch_episode_sources_internal(show_id, translation, episode)
             .await?;
 
+        let debug = std::env::var("ANV_DEBUG").is_ok();
+
+        if debug {
+            let names: Vec<&str> = sources.iter().map(|s| s.source_name.as_str()).collect();
+            eprintln!(
+                "[ANV_DEBUG] fetch_streams: show={show_id} ep={episode} translation={} — {} source(s) from API: {:?}",
+                translation.as_str(),
+                sources.len(),
+                names
+            );
+        }
+
         for provider in PREFERRED_PROVIDERS {
-            if let Some(source) = sources.iter().find(|s| s.source_name == *provider) {
-                let decoded = match decode_provider_path(&source.source_url) {
-                    Some(d) => d,
-                    None => continue,
-                };
-
-                let response = match self.fetch_clock_json(&decoded).await {
-                    Ok(r) => r,
-                    Err(_) => continue,
-                };
-
-                let mut options = Vec::new();
-                for link in response.links {
-                    options.push(build_stream_option(&source.source_name, link));
+            let source = match sources.iter().find(|s| s.source_name == *provider) {
+                Some(s) => s,
+                None => {
+                    if debug {
+                        eprintln!("[ANV_DEBUG] fetch_streams: preferred provider '{provider}' not present in source list — skipping");
+                    }
+                    continue;
                 }
+            };
 
-                if !options.is_empty() {
-                    options.sort_by(|a, b| b.quality_rank.cmp(&a.quality_rank));
-                    return Ok(options);
+            let decoded = match decode_provider_path(&source.source_url) {
+                Some(d) => d,
+                None => {
+                    if debug {
+                        eprintln!(
+                            "[ANV_DEBUG] fetch_streams: provider '{provider}' — failed to decode source URL {:?}",
+                            source.source_url
+                        );
+                    }
+                    continue;
                 }
+            };
+
+            if debug {
+                eprintln!("[ANV_DEBUG] fetch_streams: provider '{provider}' — decoded clock URL: {decoded}");
+            }
+
+            let response = match self.fetch_clock_json(&decoded).await {
+                Ok(r) => r,
+                Err(err) => {
+                    let err_str = err.to_string();
+                    // Some providers (e.g. Yt-mp4 via fast4speed CDN) decode to an
+                    // absolute external URL that serves the HLS stream directly instead
+                    // of returning a clock.json JSON payload. Detect a JSON decode
+                    // failure on an external URL and treat the URL itself as the stream.
+                    let is_json_err = err_str.contains("error decoding response body")
+                        || err_str.contains("expected value")
+                        || err_str.contains("invalid type");
+                    let is_external = decoded.starts_with("http")
+                        && !decoded.contains("allanime.day");
+                    if is_json_err && is_external {
+                        if debug {
+                            eprintln!(
+                                "[ANV_DEBUG] fetch_streams: provider '{provider}' — clock returned non-JSON; treating decoded URL as direct HLS stream"
+                            );
+                        }
+                        let mut headers = HashMap::new();
+                        headers.insert("Referer".to_string(), ALLANIME_REFERER.to_string());
+                        let option = StreamOption {
+                            provider: provider.to_string(),
+                            url: decoded,
+                            quality_label: "auto".to_string(),
+                            quality_rank: quality_rank("auto"),
+                            is_hls: true,
+                            headers,
+                            subtitle: None,
+                        };
+                        return Ok(vec![option]);
+                    }
+                    if debug {
+                        eprintln!(
+                            "[ANV_DEBUG] fetch_streams: provider '{provider}' — clock request failed: {err}"
+                        );
+                    }
+                    continue;
+                }
+            };
+
+            let mut options = Vec::new();
+            for link in response.links {
+                options.push(build_stream_option(&source.source_name, link));
+            }
+
+            if options.is_empty() {
+                if debug {
+                    eprintln!(
+                        "[ANV_DEBUG] fetch_streams: provider '{provider}' — clock returned 0 links"
+                    );
+                }
+                continue;
+            }
+
+            options.sort_by(|a, b| b.quality_rank.cmp(&a.quality_rank));
+            return Ok(options);
+        }
+
+        if debug {
+            eprintln!(
+                "[ANV_DEBUG] fetch_streams: all preferred providers exhausted — returning empty stream list"
+            );
+            // Show which iframe-only providers were available but not attempted
+            // (they require JS scraping that isn't implemented).
+            let skipped: Vec<&str> = sources
+                .iter()
+                .filter(|s| !PREFERRED_PROVIDERS.contains(&s.source_name.as_str()))
+                .map(|s| s.source_name.as_str())
+                .collect();
+            if !skipped.is_empty() {
+                eprintln!(
+                    "[ANV_DEBUG] fetch_streams: iframe-only providers present but not supported: {:?}",
+                    skipped
+                );
             }
         }
 
