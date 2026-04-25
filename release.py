@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 import subprocess
 import sys
-import tomllib
+import tomlkit
 from pathlib import Path
 
 def get_update_version(curr: str, bump: str):
@@ -26,21 +26,11 @@ def get_update_version(curr: str, bump: str):
 
 	return ".".join(curr_split)
 
-def execute_git_tag(new_version: str):
+def execute(cmd: list[str], err_msg: str):
 	try:
-		subprocess.run(["git", "tag", new_version], check=True)
-
+		subprocess.run(cmd, check=True)
 	except subprocess.CalledProcessError as e:
-		print("==> Failed to create git tag")
-		print(e)
-		exit(1)
-	
-def execute_git_push():
-	try:
-		subprocess.run(["git", "push", "--tags"], check=True)
-
-	except subprocess.CalledProcessError as e:
-		print("==> Failed to push git tag")
+		print(f"==> {err_msg}")
 		print(e)
 		exit(1)
 
@@ -51,7 +41,7 @@ if not CARGO_TOML.exists():
 	exit(1)
 
 with CARGO_TOML.open("rb") as f:
-	data = tomllib.load(f)
+	data = tomlkit.load(f)
 
 
 if len(sys.argv) != 2:
@@ -63,17 +53,35 @@ if bump not in ("patch", "minor", "major"):
 	print("==> Usage: python release.py <patch|minor|major>")
 	exit(1)
 
+curr_branch = subprocess.run(["git", "branch", "--show-current"], check=True, capture_output=True).stdout.decode().strip()
+
+if curr_branch != "dev":
+	print("==> Not on dev branch, aborting")
+	exit(1)
+
 new_version = get_update_version(data["package"]["version"], bump)
+
+ans = input(f"{data["package"]["version"]} --> {new_version}, go ahead (y/n)? ").strip().lower()
+
+if ans != "y":
+	exit(0)
 
 data["package"]["version"] = new_version
 
-with CARGO_TOML.open("wb") as f:
-	tomllib.dump(data, f)
+with CARGO_TOML.open("w") as f:
+	tomlkit.dump(data, f)
 
 print(f"==> Cargo.toml updated with {new_version}")
 
-print("==> Executing git tag")
-execute_git_tag(new_version)
+print("==> Executing `cargo update --workspace`")
+execute(["cargo", "update", "--workspace"], "Failed to execute `cargo update --workspace`")
 
+print("==> Committing changes")
+execute(["git", "commit", "-am", f"release: v{new_version}"], "Failed to create git commit")
+
+print("==> Executing git tag")
+execute(["git", "tag", new_version], "Failed to create git tag")
+
+input("Press enter to push to remote")
 print("==> Executing git push")
-execute_git_push()
+execute(["git", "push", "--atomic", "origin", "dev", "--tags"], "Failed to push git tag")
