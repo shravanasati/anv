@@ -85,3 +85,5 @@ execute(["git", "tag", new_version], "Failed to create git tag")
 input("Press enter to push to remote")
 print("==> Executing git push")
 execute(["git", "push", "--atomic", "origin", "dev", "--tags"], "Failed to push git tag")
+
+print("Watch the release build at https://github.com/shravanasati/anv/actions")
