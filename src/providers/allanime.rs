@@ -15,7 +15,7 @@ use crate::types::{
 
 const ALLANIME_API_URL: &str = "https://api.allanime.day/api";
 const ALLANIME_BASE_URL: &str = "https://allanime.day";
-const ALLANIME_REFERER: &str = "https://allmanga.to";
+const ALLANIME_REFERER: &str = "https://youtu-chan.com";
 const ALLANIME_IMAGE_REFERER: &str = "https://allanime.to";
 const ALLANIME_ORIGIN: &str = "https://allanime.day";
 // Providers known to yield direct HLS/MP4 URLs via the clock.json mechanism.
