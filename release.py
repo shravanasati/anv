@@ -80,7 +80,7 @@ print("==> Committing changes")
 execute(["git", "commit", "-am", f"release: v{new_version}"], "Failed to create git commit")
 
 print("==> Executing git tag")
-execute(["git", "tag", new_version], "Failed to create git tag")
+execute(["git", "tag", f"v{new_version}"], "Failed to create git tag")
 
 input("Press enter to push to remote")
 print("==> Executing git push")
