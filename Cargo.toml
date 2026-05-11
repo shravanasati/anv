@@ -37,6 +37,7 @@ aes = "0.8"
 ctr = "0.9"
 sha2 = "0.10"
 base64 = "0.22"
+futures = "0.3.32"
 
 # The profile that 'dist' will build with
 [profile.dist]

@@ -5,7 +5,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    process::Command,
+    process::Command, time::Duration,
 };
 
 use crate::providers::USER_AGENT;
@@ -22,6 +22,7 @@ pub struct MangaCacheState {
 pub fn build_cache_http_client() -> Result<Client> {
     Client::builder()
         .user_agent(USER_AGENT)
+        .timeout(Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .context("failed to create cache HTTP client")

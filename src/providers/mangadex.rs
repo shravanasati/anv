@@ -19,6 +19,7 @@ impl MangaDexClient {
     pub fn new() -> Result<Self> {
         let client = Client::builder()
             .user_agent(concat!("anv/", env!("CARGO_PKG_VERSION")))
+            .timeout(Duration::from_secs(30))
             .build()?;
         Ok(Self { client })
     }

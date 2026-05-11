@@ -7,6 +7,9 @@ use reqwest::Client;
 use serde::{Deserialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::time::Duration;
+
+use futures::{StreamExt, stream::FuturesUnordered};
 
 use super::{AnimeProvider, MangaProvider, USER_AGENT};
 use crate::types::{
@@ -30,7 +33,7 @@ pub struct AllAnimeClient {
 
 impl AllAnimeClient {
     pub fn new() -> Result<Self> {
-        let client = Client::builder().user_agent(USER_AGENT).build()?;
+        let client = Client::builder().user_agent(USER_AGENT).timeout(Duration::from_secs(30)).build()?;
         Ok(Self { client })
     }
 
@@ -132,6 +135,81 @@ impl AllAnimeClient {
         Ok(payload.manga)
     }
 
+    async fn fetch_single_provider_streams(
+        &self,
+        provider: &str,
+        source_url: &str,
+        debug: bool,
+    ) -> Result<Vec<StreamOption>> {
+        let decoded = match decode_provider_path(source_url) {
+            Some(d) => d,
+            None => {
+                if debug {
+                    eprintln!(
+                        "[ANV_DEBUG] fetch_streams: provider '{provider}' — failed to decode source URL {source_url:?}"
+                    );
+                }
+                bail!("failed to decode source URL");
+            }
+        };
+
+        if debug {
+            eprintln!("[ANV_DEBUG] fetch_streams: provider '{provider}' — decoded clock URL: {decoded}");
+        }
+
+        // Some providers (e.g. Yt-mp4 via fast4speed CDN) decode to an
+        // absolute external URL that serves the HLS stream directly instead
+        // of returning a clock.json JSON payload.
+        let is_external = decoded.starts_with("http") && !decoded.contains("allanime.day");
+        if is_external {
+            if debug {
+                eprintln!(
+                    "[ANV_DEBUG] fetch_streams: provider '{provider}' — external URL detected; treating as direct HLS stream"
+                );
+            }
+            let mut headers = HashMap::new();
+            headers.insert("Referer".to_string(), ALLANIME_REFERER.to_string());
+            let option = StreamOption {
+                provider: provider.to_string(),
+                url: decoded,
+                quality_label: "auto".to_string(),
+                quality_rank: quality_rank("auto"),
+                is_hls: true,
+                headers,
+                subtitle: None,
+            };
+            return Ok(vec![option]);
+        }
+
+        let response = match self.fetch_clock_json(&decoded).await {
+            Ok(r) => r,
+            Err(err) => {
+                if debug {
+                    eprintln!(
+                        "[ANV_DEBUG] fetch_streams: provider '{provider}' — clock request failed: {err}"
+                    );
+                }
+                bail!(err);
+            }
+        };
+
+        let mut options: Vec<StreamOption> = response
+            .links
+            .into_iter()
+            .map(|link| build_stream_option(provider, link))
+            .collect();
+
+        if options.is_empty() {
+            if debug {
+                eprintln!("[ANV_DEBUG] fetch_streams: provider '{provider}' — clock returned 0 links");
+            }
+            bail!("clock returned 0 links");
+        }
+
+        options.sort_by(|a, b| b.quality_rank.cmp(&a.quality_rank));
+        Ok(options)
+    }
+
     fn extract_data<T>(envelope: GraphQlEnvelope<T>) -> Result<T> {
         if let Some(errors) = envelope.errors {
             let joined = errors
@@ -217,91 +295,23 @@ impl AnimeProvider for AllAnimeClient {
             );
         }
 
-        for provider in PREFERRED_PROVIDERS {
-            let source = match sources.iter().find(|s| s.source_name == *provider) {
-                Some(s) => s,
-                None => {
-                    if debug {
-                        eprintln!("[ANV_DEBUG] fetch_streams: preferred provider '{provider}' not present in source list — skipping");
-                    }
-                    continue;
-                }
-            };
-
-            let decoded = match decode_provider_path(&source.source_url) {
-                Some(d) => d,
-                None => {
-                    if debug {
-                        eprintln!(
-                            "[ANV_DEBUG] fetch_streams: provider '{provider}' — failed to decode source URL {:?}",
-                            source.source_url
-                        );
-                    }
-                    continue;
-                }
-            };
-
-            if debug {
-                eprintln!("[ANV_DEBUG] fetch_streams: provider '{provider}' — decoded clock URL: {decoded}");
+        let mut futures = FuturesUnordered::new();
+        for provider_name in PREFERRED_PROVIDERS {
+            if let Some(source) = sources.iter().find(|s| s.source_name == *provider_name) {
+                futures.push(self.fetch_single_provider_streams(
+                    provider_name,
+                    &source.source_url,
+                    debug,
+                ));
+            } else if debug {
+                eprintln!("[ANV_DEBUG] fetch_streams: preferred provider '{provider_name}' not present in source list — skipping");
             }
+        }
 
-            let response = match self.fetch_clock_json(&decoded).await {
-                Ok(r) => r,
-                Err(err) => {
-                    let err_str = err.to_string();
-                    // Some providers (e.g. Yt-mp4 via fast4speed CDN) decode to an
-                    // absolute external URL that serves the HLS stream directly instead
-                    // of returning a clock.json JSON payload. Detect a JSON decode
-                    // failure on an external URL and treat the URL itself as the stream.
-                    let is_json_err = err_str.contains("error decoding response body")
-                        || err_str.contains("expected value")
-                        || err_str.contains("invalid type");
-                    let is_external = decoded.starts_with("http")
-                        && !decoded.contains("allanime.day");
-                    if is_json_err && is_external {
-                        if debug {
-                            eprintln!(
-                                "[ANV_DEBUG] fetch_streams: provider '{provider}' — clock returned non-JSON; treating decoded URL as direct HLS stream"
-                            );
-                        }
-                        let mut headers = HashMap::new();
-                        headers.insert("Referer".to_string(), ALLANIME_REFERER.to_string());
-                        let option = StreamOption {
-                            provider: provider.to_string(),
-                            url: decoded,
-                            quality_label: "auto".to_string(),
-                            quality_rank: quality_rank("auto"),
-                            is_hls: true,
-                            headers,
-                            subtitle: None,
-                        };
-                        return Ok(vec![option]);
-                    }
-                    if debug {
-                        eprintln!(
-                            "[ANV_DEBUG] fetch_streams: provider '{provider}' — clock request failed: {err}"
-                        );
-                    }
-                    continue;
-                }
-            };
-
-            let mut options = Vec::new();
-            for link in response.links {
-                options.push(build_stream_option(&source.source_name, link));
+        while let Some(res) = futures.next().await {
+            if let Ok(options) = res {
+                return Ok(options);
             }
-
-            if options.is_empty() {
-                if debug {
-                    eprintln!(
-                        "[ANV_DEBUG] fetch_streams: provider '{provider}' — clock returned 0 links"
-                    );
-                }
-                continue;
-            }
-
-            options.sort_by(|a, b| b.quality_rank.cmp(&a.quality_rank));
-            return Ok(options);
         }
 
         if debug {
