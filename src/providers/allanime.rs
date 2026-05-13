@@ -1,6 +1,9 @@
 use aes::Aes256;
 use anyhow::{Result, anyhow, bail};
-use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+use base64::{
+    Engine as _, engine::general_purpose::STANDARD as B64,
+    engine::general_purpose::URL_SAFE_NO_PAD as B64_URL_SAFE,
+};
 use ctr::Ctr32BE;
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use reqwest::Client;
@@ -18,14 +21,16 @@ use crate::types::{
 
 const ALLANIME_API_URL: &str = "https://api.allanime.day/api";
 const ALLANIME_BASE_URL: &str = "https://allanime.day";
-const ALLANIME_REFERER: &str = "https://youtu-chan.com";
+const ALLANIME_REFERER: &str = "https://allmanga.to";
 const ALLANIME_IMAGE_REFERER: &str = "https://allanime.to";
 const ALLANIME_ORIGIN: &str = "https://allanime.day";
+const EPISODE_SOURCES_HASH: &str = "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec";
+
 // Providers known to yield direct HLS/MP4 URLs via the clock.json mechanism.
 // The remaining providers (Ok, Vg, Fm-Hls, Mp4, Sw, …) are JS-obfuscated iframe
 // embeds that require per-provider HTML/JS scraping to extract a playable URL —
 // not currently implemented. Luf-Mp4 and Yt-mp4 cover the vast majority of shows.
-const PREFERRED_PROVIDERS: &[&str] = &["Default", "S-mp4", "Luf-Mp4", "Yt-mp4"];
+const PREFERRED_PROVIDERS: &[&str] = &["Default", "S-mp4", "Luf-Mp4", "Yt-mp4", "Fm-mp4", "Fm-Hls", "Mp4"];
 
 pub struct AllAnimeClient {
     client: Client,
@@ -37,54 +42,98 @@ impl AllAnimeClient {
         Ok(Self { client })
     }
 
-    /// POST a GraphQL request to the AllAnime API and deserialize the `data` field.
-    async fn post_graphql<T: DeserializeOwned>(&self, body: &serde_json::Value) -> Result<T> {
-        let response = self
-            .client
-            .post(ALLANIME_API_URL)
-            .header("Referer", ALLANIME_REFERER)
-            .header("Origin", ALLANIME_ORIGIN)
-            .header("Accept", "application/json")
-            .json(body)
-            .send()
-            .await?;
+    /// Execute a GraphQL request (either GET or POST) and deserialize the `data` field.
+    async fn execute_graphql<T: DeserializeOwned>(
+        &self,
+        use_get: bool,
+        variables: serde_json::Value,
+        query: Option<&str>,
+        hash: Option<&str>,
+    ) -> Result<T> {
+        let request = if use_get {
+            let mut extensions = serde_json::json!({});
+            if let Some(h) = hash {
+                extensions = serde_json::json!({
+                    "persistedQuery": {
+                        "version": 1,
+                        "sha256Hash": h
+                    }
+                });
+            }
+
+            self.client
+                .get(ALLANIME_API_URL)
+                .query(&[
+                    ("variables", serde_json::to_string(&variables)?),
+                    ("extensions", serde_json::to_string(&extensions)?),
+                ])
+                .header("Referer", "https://youtu-chan.com")
+        } else {
+            let mut body = serde_json::json!({ "variables": variables });
+            if let Some(q) = query {
+                body["query"] = serde_json::json!(q);
+            }
+            self.client
+                .post(ALLANIME_API_URL)
+                .header("Referer", ALLANIME_REFERER)
+                .header("Origin", ALLANIME_ORIGIN)
+                .json(&body)
+        };
+
+        let response = request.header("Accept", "application/json").send().await?;
         let status = response.status();
         let text = response.text().await?;
+
         if !status.is_success() {
             bail!("AllAnime API HTTP {status}: {text}");
         }
+
         if std::env::var("ANV_DEBUG").is_ok() {
-            eprintln!("[AllAnime] HTTP {status} — raw response:\n{text}");
+            eprintln!(
+                "[AllAnime] {} HTTP {status} — raw response:\n{text}",
+                if use_get { "GET" } else { "POST" }
+            );
         }
+
         // AllAnime now AES-256-CTR-encrypts responses; detect and unwrap.
         let json_str: std::borrow::Cow<str> = if text.contains("\"tobeparsed\"") {
             let enc: EncryptedEnvelope = serde_json::from_str(&text).map_err(|e| {
                 anyhow!("failed to parse encrypted AllAnime envelope: {e}\nRaw:\n{text}")
             })?;
             let plaintext = decrypt_tobeparsed(&enc.data.tobeparsed)?;
+
             if std::env::var("ANV_DEBUG").is_ok() {
                 eprintln!("[AllAnime] decrypted tobeparsed plaintext:\n{plaintext}");
             }
+
             // The plaintext is the inner data object; wrap it so it matches
             // GraphQlEnvelope<T> which expects {"data": {...}}.
             std::borrow::Cow::Owned(format!(r#"{{"data":{plaintext}}}"#))
         } else {
             std::borrow::Cow::Borrowed(&text)
         };
+
         let envelope: GraphQlEnvelope<T> = serde_json::from_str(&json_str).map_err(|e| {
             anyhow!(
                 "failed to parse AllAnime API response: {e}\nJSON:\n{json_str}"
             )
         })?;
+
         Self::extract_data(envelope)
     }
 
+    /// POST a GraphQL request to the AllAnime API and deserialize the `data` field.
+    async fn post_graphql<T: DeserializeOwned>(&self, body: &serde_json::Value) -> Result<T> {
+        let variables = body.get("variables").cloned().unwrap_or(serde_json::json!({}));
+        let query = body.get("query").and_then(|v| v.as_str());
+        self.execute_graphql(false, variables, query, None).await
+    }
+
     async fn fetch_show_detail(&self, show_id: &str) -> Result<ShowDetail> {
-        let body = serde_json::json!({
-            "query": SHOW_DETAIL_QUERY,
-            "variables": { "showId": show_id }
-        });
-        let payload: ShowDetailPayload = self.post_graphql(&body).await?;
+        let variables = serde_json::json!({ "showId": show_id });
+        let payload: ShowDetailPayload = self
+            .execute_graphql(false, variables, Some(SHOW_DETAIL_QUERY), None)
+            .await?;
         Ok(payload.show)
     }
 
@@ -94,19 +143,33 @@ impl AllAnimeClient {
         translation: Translation,
         episode: &str,
     ) -> Result<Vec<SourceDescriptor>> {
-        let body = serde_json::json!({
-            "query": EPISODE_SOURCES_QUERY,
-            "variables": {
-                "showId": show_id,
-                "translationType": translation.as_str(),
-                "episodeString": episode
-            }
+        let variables = serde_json::json!({
+            "showId": show_id,
+            "translationType": translation.as_str(),
+            "episodeString": episode
         });
-        let payload: EpisodePayload = self.post_graphql(&body).await?;
-        Ok(payload.episode.source_urls)
+
+        // Try persisted query (GET) first.
+        match self
+            .execute_graphql::<EpisodePayload>(true, variables.clone(), None, Some(EPISODE_SOURCES_HASH))
+            .await
+        {
+            Ok(payload) => Ok(payload.episode.source_urls),
+            Err(err) => {
+                if std::env::var("ANV_DEBUG").is_ok() {
+                    eprintln!("[AllAnime] Persisted query failed, falling back to POST: {err}");
+                }
+                let body = serde_json::json!({
+                    "query": EPISODE_SOURCES_QUERY,
+                    "variables": variables
+                });
+                let payload: EpisodePayload = self.post_graphql(&body).await?;
+                Ok(payload.episode.source_urls)
+            }
+        }
     }
 
-    async fn fetch_clock_json(&self, path: &str) -> Result<ClockResponse> {
+    async fn fetch_provider_json(&self, path: &str) -> Result<serde_json::Value> {
         let url = if path.starts_with("http") {
             path.to_string()
         } else {
@@ -121,7 +184,7 @@ impl AllAnimeClient {
             .send()
             .await?
             .error_for_status()?
-            .json::<ClockResponse>()
+            .json::<serde_json::Value>()
             .await?;
         Ok(response)
     }
@@ -141,20 +204,24 @@ impl AllAnimeClient {
         source_url: &str,
         debug: bool,
     ) -> Result<Vec<StreamOption>> {
-        let decoded = match decode_provider_path(source_url) {
-            Some(d) => d,
-            None => {
-                if debug {
-                    eprintln!(
-                        "[ANV_DEBUG] fetch_streams: provider '{provider}' — failed to decode source URL {source_url:?}"
-                    );
+        let decoded = if source_url.starts_with("http") || source_url.starts_with("/") {
+            source_url.to_string()
+        } else {
+            match decode_provider_path(source_url) {
+                Some(d) => d,
+                None => {
+                    if debug {
+                        eprintln!(
+                            "[ANV_DEBUG] fetch_streams: provider '{provider}' — failed to decode source URL {source_url:?}"
+                        );
+                    }
+                    bail!("failed to decode source URL");
                 }
-                bail!("failed to decode source URL");
             }
         };
 
         if debug {
-            eprintln!("[ANV_DEBUG] fetch_streams: provider '{provider}' — decoded clock URL: {decoded}");
+            eprintln!("[ANV_DEBUG] fetch_streams: provider '{provider}' — working URL: {decoded}");
         }
 
         // Some providers (e.g. Yt-mp4 via fast4speed CDN) decode to an
@@ -164,9 +231,47 @@ impl AllAnimeClient {
         if is_external {
             if debug {
                 eprintln!(
-                    "[ANV_DEBUG] fetch_streams: provider '{provider}' — external URL detected; treating as direct HLS stream"
+                    "[ANV_DEBUG] fetch_streams: provider '{provider}' — external URL detected; handling based on host"
                 );
             }
+
+            if decoded.contains("mp4upload.com") {
+                if debug {
+                    eprintln!("[ANV_DEBUG] fetch_streams: provider '{provider}' — Mp4Upload detected; scraping embed page");
+                }
+                let response = self
+                    .client
+                    .get(&decoded)
+                    .header("Referer", ALLANIME_REFERER)
+                    .send()
+                    .await?
+                    .text()
+                    .await?;
+
+                let re_mp4 = regex::Regex::new(r#"(?:src|file):\s*"([^"]+\.mp4[^"]*)""#).unwrap();
+                if let Some(cap) = re_mp4.captures(&response) {
+                    let mp4_url = cap[1].replace("\\u0026", "&").replace("\\", "");
+                    if debug {
+                        eprintln!(
+                            "[ANV_DEBUG] fetch_streams: provider '{provider}' — scraped Mp4Upload URL: {mp4_url}"
+                        );
+                    }
+                    return Ok(vec![StreamOption {
+                        provider: provider.to_string(),
+                        url: mp4_url,
+                        quality_label: "auto".to_string(),
+                        quality_rank: 0,
+                        is_hls: false,
+                        headers: {
+                            let mut h = HashMap::new();
+                            h.insert("Referer".to_string(), "https://www.mp4upload.com/".to_string());
+                            h
+                        },
+                        subtitle: None,
+                    }]);
+                }
+            }
+
             let mut headers = HashMap::new();
             headers.insert("Referer".to_string(), ALLANIME_REFERER.to_string());
             let option = StreamOption {
@@ -181,29 +286,79 @@ impl AllAnimeClient {
             return Ok(vec![option]);
         }
 
-        let response = match self.fetch_clock_json(&decoded).await {
-            Ok(r) => r,
+        let json = match self.fetch_provider_json(&decoded).await {
+            Ok(j) => j,
             Err(err) => {
                 if debug {
                     eprintln!(
-                        "[ANV_DEBUG] fetch_streams: provider '{provider}' — clock request failed: {err}"
+                        "[ANV_DEBUG] fetch_streams: provider '{provider}' — request failed: {err}"
                     );
                 }
                 bail!(err);
             }
         };
 
-        let mut options: Vec<StreamOption> = response
-            .links
-            .into_iter()
-            .map(|link| build_stream_option(provider, link))
-            .collect();
+        let mut options: Vec<StreamOption> = if json.get("links").is_some() {
+            let response: ClockResponse = serde_json::from_value(json)?;
+            response
+                .links
+                .into_iter()
+                .map(|link| build_stream_option(provider, link))
+                .collect()
+        } else if json.get("payload").is_some() {
+            let response: FilemoonResponse = serde_json::from_value(json)?;
+            let decrypted = decrypt_filemoon(&response)?;
+            if debug {
+                eprintln!("[AllAnime] decrypted Filemoon payload:\n{decrypted}");
+            }
+            // replace escaped characters as per ani-cli
+            let decrypted = decrypted
+                .replace("\\u0026", "&")
+                .replace("\\u003D", "=")
+                .replace("\\u002F", "/")
+                .replace("\\/", "/");
+
+            // Use regex to extract url and height from Filemoon payload
+            // Since we need to pair them, and they might come in any order,
+            // we'll find all "url" and all "height" and hope they match 1:1.
+            // Actually, ani-cli's sed is better at pairing.
+            let re_url = regex::Regex::new(r#""url"\s*:\s*"([^"]+)""#).unwrap();
+            let re_height = regex::Regex::new(r#""height"\s*:\s*"?(\d+)"?"#).unwrap();
+
+            let urls: Vec<_> = re_url.captures_iter(&decrypted).map(|c| c[1].to_string()).collect();
+            let heights: Vec<_> = re_height
+                .captures_iter(&decrypted)
+                .map(|c| c[1].parse::<i32>().unwrap_or(0))
+                .collect();
+
+            urls.into_iter()
+                .zip(heights)
+                .map(|(url, height)| StreamOption {
+                    provider: provider.to_string(),
+                    url,
+                    quality_label: format!("{}p", height),
+                    quality_rank: height,
+                    is_hls: true,
+                    headers: {
+                        let mut h = HashMap::new();
+                        h.insert("Referer".to_string(), ALLANIME_REFERER.to_string());
+                        h
+                    },
+                    subtitle: None,
+                })
+                .collect()
+        } else {
+            if debug {
+                eprintln!("[ANV_DEBUG] fetch_streams: provider '{provider}' — unknown JSON format: {json}");
+            }
+            bail!("unknown provider response format");
+        };
 
         if options.is_empty() {
             if debug {
-                eprintln!("[ANV_DEBUG] fetch_streams: provider '{provider}' — clock returned 0 links");
+                eprintln!("[ANV_DEBUG] fetch_streams: provider '{provider}' — returned 0 links");
             }
-            bail!("clock returned 0 links");
+            bail!("returned 0 links");
         }
 
         options.sort_by(|a, b| b.quality_rank.cmp(&a.quality_rank));
@@ -523,6 +678,45 @@ fn decrypt_tobeparsed(blob: &str) -> Result<String> {
         .map_err(|e| anyhow!("tobeparsed plaintext is not valid UTF-8: {e}"))
 }
 
+/// Decrypts the Filemoon payload using AES-256-CTR.
+fn decrypt_filemoon(resp: &FilemoonResponse) -> Result<String> {
+    let kp1 = B64_URL_SAFE
+        .decode(&resp.key_parts[0])
+        .map_err(|e| anyhow!("filemoon kp1 decode failed: {e}"))?;
+    let kp2 = B64_URL_SAFE
+        .decode(&resp.key_parts[1])
+        .map_err(|e| anyhow!("filemoon kp2 decode failed: {e}"))?;
+    let iv_raw = B64_URL_SAFE
+        .decode(&resp.iv)
+        .map_err(|e| anyhow!("filemoon iv decode failed: {e}"))?;
+    let ciphertext = B64_URL_SAFE
+        .decode(&resp.payload)
+        .map_err(|e| anyhow!("filemoon payload decode failed: {e}"))?;
+
+    let mut key = Vec::with_capacity(kp1.len() + kp2.len());
+    key.extend_from_slice(&kp1);
+    key.extend_from_slice(&kp2);
+
+    if key.len() != 32 {
+        bail!("filemoon key length is not 32 bytes (got {})", key.len());
+    }
+
+    if iv_raw.len() < 12 {
+        bail!("filemoon iv length is too short (got {})", iv_raw.len());
+    }
+
+    // Build the 128-bit CTR IV: nonce (96 bits) || counter=2 (32 bits, big-endian).
+    let mut iv = [0u8; 16];
+    iv[..12].copy_from_slice(&iv_raw[..12]);
+    iv[15] = 0x02;
+
+    let mut plaintext = ciphertext;
+    let mut cipher = Ctr32BE::<Aes256>::new(key.as_slice().into(), &iv.into());
+    cipher.apply_keystream(&mut plaintext);
+
+    String::from_utf8(plaintext).map_err(|e| anyhow!("filemoon plaintext is not valid UTF-8: {e}"))
+}
+
 /// Wrapper for the encrypted envelope: `{"data": {"_m": "...", "tobeparsed": "<base64>"}}`
 #[derive(Debug, Deserialize)]
 struct EncryptedEnvelope {
@@ -532,6 +726,14 @@ struct EncryptedEnvelope {
 #[derive(Debug, Deserialize)]
 struct EncryptedData {
     tobeparsed: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FilemoonResponse {
+    iv: String,
+    payload: String,
+    #[serde(rename = "key_parts")]
+    key_parts: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
