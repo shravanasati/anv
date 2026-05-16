@@ -13,6 +13,9 @@ pub struct AppConfig {
     pub binge: bool,
 
     #[serde(default)]
+    pub auto_play_next: bool,
+
+    #[serde(default)]
     pub mal: MalConfig,
 
     #[serde(default)]
@@ -42,8 +45,11 @@ const CONFIG_HEADER: &str = "# anv configuration
 # player — media player command (default: \"mpv\")
 #           also overridable with ANV_PLAYER env var
 #
-# binge   — set to true to auto-play the next episode without prompting
-#           (can also be enabled per-session with the --binge flag)
+# binge          — set to true to auto-play the next episode without prompting
+#                  (can also be enabled per-session with the --binge flag)
+#
+# auto_play_next — set to true to automatically resume from the next episode
+#                  instead of the last watched episode in history/watchlist
 #
 # [mal]
 #   client_id — your MAL API client ID
@@ -60,6 +66,7 @@ impl Default for AppConfig {
         Self {
             player: default_player(),
             binge: false,
+            auto_play_next: false,
             mal: MalConfig::default(),
             sync: SyncConfig::default(),
         }

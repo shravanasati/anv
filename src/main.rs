@@ -1,16 +1,11 @@
-use std::{
-    cmp::Ordering,
-    path::{Path, PathBuf},
-};
+use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
-use chrono::Utc;
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use config::AppConfig;
-use dialoguer::{FuzzySelect, Select};
-use reqwest::StatusCode;
 
 mod cache;
+mod cmd;
 mod config;
 mod history;
 mod player;
@@ -18,21 +13,16 @@ mod providers;
 mod proxy;
 mod sync;
 mod types;
+mod utils;
 
-use cache::{MangaCacheState, cache_manga_pages};
-use history::{History, HistoryEntry, history_path, theme};
-use player::{choose_stream, launch_image_viewer, launch_player};
+use history::{History, history_path};
 use providers::{
-    AnimeProvider, MangaProvider, allanime::AllAnimeClient, mangadex::MangaDexClient,
+    allanime::AllAnimeClient, mangadex::MangaDexClient,
     mangapill::MangapillClient,
 };
-use sync::{
-    SyncProvider,
-    mal::{MalClient, MalToken, MalWatchlistEntry, build_mal_client_if_enabled},
-};
-use types::{ChapterCounts, EpisodeCounts, MangaInfo, Provider, ShowInfo, Translation};
+use sync::mal::build_mal_client_if_enabled;
+use types::{Provider, Translation};
 
-const INITIAL_MANGA_PAGE_PRELOAD: usize = 5;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -41,22 +31,22 @@ const INITIAL_MANGA_PAGE_PRELOAD: usize = 5;
     long_about = "anv lets you search, stream anime, and read manga directly from the terminal.",
     version
 )]
-struct Cli {
+pub struct Cli {
     /// Play dubbed audio instead of the default subtitled version.
     #[arg(short = 'd', long)]
-    dub: bool,
+    pub dub: bool,
 
     /// Use raw/untranslated source (no subtitles). For manga: show raw scans.
     #[arg(short = 'r', long)]
-    raw: bool,
+    pub raw: bool,
 
     /// Search and read manga instead of anime.
     #[arg(short = 'm', long)]
-    manga: bool,
+    pub manga: bool,
 
     /// Automatically play the next episode without prompting (binge mode).
     #[arg(short = 'b', long)]
-    binge: bool,
+    pub binge: bool,
 
     /// Content provider to use for streaming or reading.
     #[arg(
@@ -66,31 +56,35 @@ struct Cli {
         value_enum,
         value_name = "PROVIDER"
     )]
-    provider: Provider,
+    pub provider: Provider,
 
     /// Override the directory used to cache manga page images.
     #[arg(short = 'C', long, value_name = "DIR")]
-    cache_dir: Option<PathBuf>,
+    pub cache_dir: Option<PathBuf>,
 
     /// Start playback/reading from a specific episode or chapter number.
     #[arg(short = 'e', long, value_name = "EPISODE")]
-    episode: Option<String>,
+    pub episode: Option<String>,
 
     /// Title to search for (e.g. `anv "attack on titan"`).
     #[arg(value_name = "QUERY")]
     query: Vec<String>,
 
     #[command(subcommand)]
-    command: Option<Commands>,
+    pub command: Option<Commands>,
 }
 
 #[derive(Debug, Subcommand)]
-enum Commands {
+pub enum Commands {
     /// Browse your watch/read history and resume from where you left off.
     History {
         /// Automatically play the next episode without prompting (binge mode).
         #[arg(short = 'b', long)]
         binge: bool,
+
+        /// Resume from the next episode/chapter instead of the last watched.
+        #[arg(short = 'n', long = "next-episode")]
+        next_episode: bool,
     },
 
     /// Browse your MAL "Plan to Watch" list and start streaming.
@@ -107,6 +101,30 @@ enum Commands {
         /// Start playback from a specific episode number.
         #[arg(short = 'e', long, value_name = "EPISODE")]
         episode: Option<String>,
+
+        /// Resume from the next episode/chapter instead of the last watched.
+        #[arg(short = 'n', long = "next-episode")]
+        next_episode: bool,
+    },
+
+    /// Browse your MAL "Watching" list and start streaming.
+    /// Requires MAL sync to be configured (`anv sync enable mal`).
+    Watching {
+        /// Automatically play the next episode without prompting (binge mode).
+        #[arg(short = 'b', long)]
+        binge: bool,
+
+        /// Play dubbed audio instead of the default subtitled version.
+        #[arg(short = 'd', long)]
+        dub: bool,
+
+        /// Start playback from a specific episode number.
+        #[arg(short = 'e', long, value_name = "EPISODE")]
+        episode: Option<String>,
+
+        /// Resume from the next episode/chapter instead of the last watched.
+        #[arg(short = 'n', long = "next-episode")]
+        next_episode: bool,
     },
 
     /// Manage sync with external anime list services (e.g. MyAnimeList).
@@ -117,7 +135,7 @@ enum Commands {
 }
 
 #[derive(Debug, Subcommand)]
-enum SyncAction {
+pub enum SyncAction {
     /// Enable sync with a list provider and complete the authentication flow.
     Enable {
         #[command(subcommand)]
@@ -130,7 +148,7 @@ enum SyncAction {
 }
 
 #[derive(Debug, Subcommand)]
-enum SyncProviderCmd {
+pub enum SyncProviderCmd {
     /// Authenticate with MyAnimeList via OAuth PKCE. Stores a token locally.
     Mal,
 }
@@ -152,12 +170,13 @@ async fn run() -> Result<()> {
 
     // Handle subcommands
     match &cli.command {
-        Some(Commands::History { binge: history_binge }) => {
+        Some(Commands::History { binge: history_binge, next_episode: history_next }) => {
             let history_path = history_path()?;
             let mut history = History::load(&history_path)?;
             let mal_client = build_mal_client_if_enabled(&cfg).await;
             let binge = *history_binge || cli.binge || cfg.binge;
-            return run_anime_flow(
+            let auto_play_next = *history_next || cfg.auto_play_next;
+            return cmd::anime::run_anime_flow(
                 &cli,
                 Translation::Sub,
                 true,
@@ -166,14 +185,16 @@ async fn run() -> Result<()> {
                 cfg.player.clone(),
                 mal_client.as_ref(),
                 binge,
+                auto_play_next,
             )
             .await;
         }
-        Some(Commands::Watchlist { binge: wl_binge, dub: wl_dub, episode: wl_episode }) => {
+        Some(Commands::Watchlist { binge: wl_binge, dub: wl_dub, episode: wl_episode, next_episode: wl_next }) => {
             let history_path = history_path()?;
             let mut history = History::load(&history_path)?;
             let mal_client = build_mal_client_if_enabled(&cfg).await;
             let binge = *wl_binge || cli.binge || cfg.binge;
+            let auto_play_next = *wl_next || cfg.auto_play_next;
             let translation = if *wl_dub || cli.dub { Translation::Dub } else { Translation::Sub };
             let episode = wl_episode.clone().or_else(|| cli.episode.clone());
             return match mal_client.as_ref() {
@@ -186,10 +207,47 @@ async fn run() -> Result<()> {
                     Ok(())
                 }
                 Some(client) => {
-                    run_watchlist(
+                    cmd::sync::run_mal_list(
+                        "plan_to_watch",
+                        "Plan to Watch",
                         translation,
                         binge,
                         episode,
+                        auto_play_next,
+                        &mut history,
+                        &history_path,
+                        cfg.player.clone(),
+                        client,
+                    )
+                    .await
+                }
+            };
+        }
+        Some(Commands::Watching { binge: w_binge, dub: w_dub, episode: w_episode, next_episode: w_next }) => {
+            let history_path = history_path()?;
+            let mut history = History::load(&history_path)?;
+            let mal_client = build_mal_client_if_enabled(&cfg).await;
+            let binge = *w_binge || cli.binge || cfg.binge;
+            let auto_play_next = *w_next || cfg.auto_play_next;
+            let translation = if *w_dub || cli.dub { Translation::Dub } else { Translation::Sub };
+            let episode = w_episode.clone().or_else(|| cli.episode.clone());
+            return match mal_client.as_ref() {
+                None => {
+                    eprintln!(
+                        "error: MAL sync is not configured.\n\
+                         Run `anv sync enable mal` to authenticate, then set\n\
+                         `sync.enabled = true` in your config."
+                    );
+                    Ok(())
+                }
+                Some(client) => {
+                    cmd::sync::run_mal_list(
+                        "watching",
+                        "Watching",
+                        translation,
+                        binge,
+                        episode,
+                        auto_play_next,
                         &mut history,
                         &history_path,
                         cfg.player.clone(),
@@ -204,13 +262,13 @@ async fn run() -> Result<()> {
                 SyncAction::Enable {
                     provider: SyncProviderCmd::Mal,
                 },
-        }) => return run_sync_enable_mal(&cfg).await,
+        }) => return cmd::sync::run_sync_enable_mal(&cfg).await,
         Some(Commands::Sync {
             action: SyncAction::Status,
-        }) => return run_sync_status(&cfg),
+        }) => return cmd::sync::run_sync_status(&cfg),
         Some(Commands::Sync {
             action: SyncAction::Disable,
-        }) => return run_sync_disable(cfg).await,
+        }) => return cmd::sync::run_sync_disable(cfg).await,
         _ => {}
     }
 
@@ -229,17 +287,17 @@ async fn run() -> Result<()> {
         match cli.provider {
             Provider::Allanime => {
                 let client = AllAnimeClient::new()?;
-                return run_manga_flow(&cli, translation, &mut history, &history_path, &client)
+                return cmd::manga::run_manga_flow(&cli, translation, &mut history, &history_path, &client, cfg.auto_play_next)
                     .await;
             }
             Provider::Mangadex => {
                 let client = MangaDexClient::new()?;
-                return run_manga_flow(&cli, translation, &mut history, &history_path, &client)
+                return cmd::manga::run_manga_flow(&cli, translation, &mut history, &history_path, &client, cfg.auto_play_next)
                     .await;
             }
             Provider::Mangapill => {
                 let client = MangapillClient::new()?;
-                return run_manga_flow(&cli, translation, &mut history, &history_path, &client)
+                return cmd::manga::run_manga_flow(&cli, translation, &mut history, &history_path, &client, cfg.auto_play_next)
                     .await;
             }
         }
@@ -255,7 +313,8 @@ async fn run() -> Result<()> {
         eprintln!("Warning: Only 'allanime' provider supports anime. Switching to 'allanime'.");
     }
     let binge = cli.binge || cfg.binge;
-    run_anime_flow(
+    let auto_play_next = cfg.auto_play_next;
+    cmd::anime::run_anime_flow(
         &cli,
         translation,
         false,
@@ -264,807 +323,7 @@ async fn run() -> Result<()> {
         cfg.player.clone(),
         mal_client.as_ref(),
         binge,
+        auto_play_next,
     )
     .await
-}
-
-/// `anv watchlist` — browse the user's MAL "Plan to Watch" list and stream a chosen show.
-async fn run_watchlist(
-    translation: Translation,
-    binge: bool,
-    episode: Option<String>,
-    history: &mut History,
-    history_path: &Path,
-    player: String,
-    mal_client: &MalClient,
-) -> Result<()> {
-    println!("Fetching your MAL 'Plan to Watch' list...");
-    let watchlist = mal_client.fetch_plan_to_watch().await?;
-
-    if watchlist.is_empty() {
-        println!("Your MAL 'Plan to Watch' list is empty.");
-        return Ok(());
-    }
-
-    let allanime = AllAnimeClient::new()?;
-    let theme = theme();
-
-    // Outer loop — redisplay the watchlist dropdown after a failed (Esc)
-    // disambiguation attempt so the user can pick a different show.
-    loop {
-        let items: Vec<String> = watchlist
-            .iter()
-            .map(|e| {
-                let ep_count = if e.num_episodes == 0 {
-                    "? ep".to_string()
-                } else {
-                    format!("{} ep", e.num_episodes)
-                };
-                let status_tag = match e.airing_status.as_str() {
-                    "currently_airing" => " · airing",
-                    "finished_airing"  => " · finished",
-                    _                  => "",
-                };
-                format!("{} [{}{}]", e.title, ep_count, status_tag)
-            })
-            .collect();
-
-        let selection = dialoguer::FuzzySelect::with_theme(&theme)
-            .with_prompt("Plan to Watch (type to search, Esc to cancel)")
-            .items(&items)
-            .default(0)
-            .interact_opt()?;
-
-        let Some(idx) = selection else {
-            println!("Cancelled.");
-            return Ok(());
-        };
-
-        let entry: &MalWatchlistEntry = &watchlist[idx];
-
-        // --- Resolve AllAnime show_id ---
-        // 1. Check existing MalIdCache via runtime inversion.
-        let cached_allanime_id = mal_client.cached_allanime_id(entry.mal_id);
-
-        let allanime_id = if let Some(id) = cached_allanime_id {
-            id
-        } else {
-            // 2. Search AllAnime by title.
-            println!("Searching AllAnime for \"{}\"...", entry.title);
-            let results = allanime.search_shows(&entry.title, translation).await?;
-
-            match results.len() {
-                0 => {
-                    // No results — prompt for a corrected query, then retry.
-                    println!("No AllAnime results for \"{}\". Try a different search query (or Esc to go back).", entry.title);
-                    let query: String = dialoguer::Input::with_theme(&theme)
-                        .with_prompt("Search query")
-                        .allow_empty(true)
-                        .interact_text()?;
-                    if query.trim().is_empty() {
-                        // loop back to watchlist
-                        continue;
-                    }
-                    let retry = allanime.search_shows(query.trim(), translation).await?;
-                    if retry.is_empty() {
-                        println!("Still no results. Going back to watchlist.");
-                        continue;
-                    }
-                    // Pick from retry results.
-                    let opts: Vec<String> = retry
-                        .iter()
-                        .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
-                        .collect();
-                    let pick = dialoguer::Select::with_theme(&theme)
-                        .with_prompt(format!("Which AllAnime entry matches \"{}\"? (Esc = back)", entry.title))
-                        .items(&opts)
-                        .default(0)
-                        .interact_opt()?;
-                    let Some(i) = pick else { continue };
-                    let chosen = &retry[i];
-                    mal_client.cache_allanime_id(&chosen.id, entry.mal_id);
-                    chosen.id.clone()
-                }
-                1 => {
-                    // Unambiguous — store and proceed.
-                    mal_client.cache_allanime_id(&results[0].id, entry.mal_id);
-                    results[0].id.clone()
-                }
-                _ => {
-                    // Multiple results — show disambiguation dropdown.
-                    let opts: Vec<String> = results
-                        .iter()
-                        .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
-                        .collect();
-                    let pick = dialoguer::Select::with_theme(&theme)
-                        .with_prompt(format!("Which AllAnime entry matches \"{}\"? (Esc = back)", entry.title))
-                        .items(&opts)
-                        .default(0)
-                        .interact_opt()?;
-                    let Some(i) = pick else {
-                        // User pressed Esc — loop back to the watchlist.
-                        continue;
-                    };
-                    let chosen = &results[i];
-                    mal_client.cache_allanime_id(&chosen.id, entry.mal_id);
-                    chosen.id.clone()
-                }
-            }
-        };
-
-        let show = ShowInfo {
-            id: allanime_id,
-            title: entry.title.clone(),
-            available_eps: EpisodeCounts::default(),
-        };
-
-        return play_show(
-            &allanime,
-            history,
-            history_path,
-            translation,
-            Provider::Allanime,
-            show,
-            episode.clone(),
-            &player,
-            Some(mal_client),
-            binge,
-        )
-        .await;
-    }
-}
-
-/// `anv sync enable mal` — authenticates with MAL if needed.
-async fn run_sync_enable_mal(cfg: &AppConfig) -> Result<()> {
-    if cfg.mal.client_id.is_empty() {
-        bail!(
-            "MAL client_id is not set.\n\
-             1. Go to https://myanimelist.net/apiconfig and create an application.\n\
-             2. Set the app type to 'other' and redirect URI to: http://localhost:11422/callback\n\
-             3. Copy the Client ID and add it to your config:\n\
-             \n\
-             [mal]\n\
-             client_id = \"<your-client-id>\"\n\
-             \n\
-             Config location: {}",
-            AppConfig::config_path()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| "<unknown>".into())
-        );
-    }
-
-    // Check for an existing valid token
-    match MalToken::load()? {
-        Some(token) if !token.is_expired() => {
-            println!("Already authenticated with MyAnimeList.");
-            println!(
-                "To activate sync, set `sync.enabled = true` in your config:\n  {}",
-                AppConfig::config_path()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|_| "<unknown>".into())
-            );
-            return Ok(());
-        }
-        _ => {}
-    }
-
-    // No valid token — run OAuth PKCE flow
-    // OAuth involves blocking I/O; run it in a blocking thread so we don't
-    // block the async executor.
-    let client_id = cfg.mal.client_id.clone();
-    let token = MalClient::authenticate(&client_id)
-        .await
-        .context("MAL OAuth flow failed")?;
-
-    println!("\n✓ Successfully authenticated with MyAnimeList!");
-    println!(
-        "Token stored at: {}",
-        MalToken::token_path()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "<unknown>".into())
-    );
-    println!(
-        "\nTo activate sync, set `sync.enabled = true` in:\n  {}",
-        AppConfig::config_path()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "<unknown>".into())
-    );
-    let _ = token; // already saved inside authenticate()
-    Ok(())
-}
-
-/// `anv sync status` — show current sync/auth state.
-fn run_sync_status(cfg: &AppConfig) -> Result<()> {
-    let config_path = AppConfig::config_path()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "<unknown>".into());
-
-    println!("── MAL Sync Status ──");
-    println!(
-        "  sync.enabled : {}",
-        if cfg.sync.enabled { "yes" } else { "no" }
-    );
-
-    if cfg.mal.client_id.is_empty() {
-        println!("  client_id    : not set  (add to {})", config_path);
-    } else {
-        let masked = format!("{}…", &cfg.mal.client_id[..cfg.mal.client_id.len().min(8)]);
-        println!("  client_id    : {}", masked);
-    }
-
-    match MalToken::load() {
-        Ok(Some(token)) => {
-            if token.is_expired() {
-                println!("  token        : expired  (run `anv sync enable mal` to refresh)");
-            } else {
-                println!(
-                    "  token        : valid, expires {}",
-                    token.expires_at.format("%Y-%m-%d %H:%M UTC")
-                );
-            }
-        }
-        Ok(None) => println!("  token        : not found  (run `anv sync enable mal`)"),
-        Err(err) => println!("  token        : error reading ({err})"),
-    }
-    Ok(())
-}
-
-/// `anv sync disable` — set sync.enabled = false and write config.
-async fn run_sync_disable(mut cfg: AppConfig) -> Result<()> {
-    if !cfg.sync.enabled {
-        println!("Sync is already disabled.");
-        return Ok(());
-    }
-    cfg.sync.enabled = false;
-    cfg.save().context("failed to save config")?;
-    println!(
-        "Sync disabled. Edit {} to re-enable.",
-        AppConfig::config_path()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "<unknown>".into())
-    );
-    Ok(())
-}
-
-async fn run_manga_flow(
-    cli: &Cli,
-    translation: Translation,
-    history: &mut History,
-    history_path: &Path,
-    client: &impl MangaProvider,
-) -> Result<()> {
-    if cli.query.is_empty() {
-        println!("No query provided. Use `anv --manga <name>`.");
-        return Ok(());
-    }
-
-    let query = cli.query.join(" ");
-    let mangas = client.search_mangas(&query, translation).await?;
-    if mangas.is_empty() {
-        bail!("No results for \"{}\" ({})", query, translation.label());
-    }
-
-    let theme = theme();
-    let options: Vec<String> = mangas
-        .iter()
-        .map(|m| {
-            let count = match translation {
-                Translation::Sub => m.available_chapters.sub,
-                Translation::Raw => m.available_chapters.raw,
-                Translation::Dub => 0,
-            };
-            format!("{} [{} chapters]", m.title, count)
-        })
-        .collect();
-    let selection = Select::with_theme(&theme)
-        .with_prompt("Select a manga (Esc to cancel)")
-        .items(&options)
-        .default(0)
-        .interact_opt()?;
-    let Some(idx) = selection else {
-        println!("Cancelled.");
-        return Ok(());
-    };
-    let manga = mangas[idx].clone();
-    read_manga(
-        client,
-        translation,
-        manga,
-        history,
-        history_path,
-        cli.episode.clone(),
-        cli.cache_dir.as_deref(),
-        cli.provider,
-    )
-    .await
-}
-
-async fn read_manga(
-    client: &impl MangaProvider,
-    translation: Translation,
-    manga: MangaInfo,
-    history: &mut History,
-    history_path: &Path,
-    prefer_chapter: Option<String>,
-    cache_base_override: Option<&Path>,
-    provider: Provider,
-) -> Result<()> {
-    let chapters = match client.fetch_chapters(&manga.id, translation).await {
-        Ok(c) => c,
-        Err(err) => {
-            let msg = err.to_string();
-            if msg.contains("connection closed")
-                || msg.contains("SendRequest")
-                || msg.contains("connect")
-            {
-                bail!(
-                    "Could not connect to the provider \u{2014} your network may be blocking it.\nTry a different provider: --provider mangadex  or  --provider mangapill"
-                );
-            }
-            return Err(err);
-        }
-    };
-    if chapters.is_empty() {
-        bail!(
-            "No {} chapters available for {}",
-            translation.label(),
-            manga.title
-        );
-    }
-
-    let chapter_labels: Vec<String> = chapters.iter().map(|c| c.label.clone()).collect();
-    let sorted_labels = sorted_episode_labels(&chapter_labels);
-
-    let latest_available = sorted_labels
-        .last()
-        .cloned()
-        .expect("chapters is non-empty; bail!() above ensures this");
-    println!(
-        "Found {} {} chapters. Latest available: {}.",
-        chapters.len(),
-        translation.label(),
-        latest_available
-    );
-
-    let last_read = history.last_chapter(&manga.id, translation);
-    if let Some(prev) = &last_read {
-        println!("Last read {} chapter: {}.", translation.label(), prev);
-    }
-
-    let fallback = last_read.unwrap_or_else(|| latest_available.clone());
-    let (mut current_label, mut skip_selection) = match &prefer_chapter {
-        Some(ch) if chapter_labels.contains(ch) => (ch.clone(), true),
-        Some(ch) => {
-            println!(
-                "Chapter '{}' does not exist for '{}'. Showing chapter list.",
-                ch, manga.title
-            );
-            (fallback, false)
-        }
-        None => (fallback, false),
-    };
-
-    let theme = theme();
-    loop {
-        let default_idx = chapter_labels
-            .iter()
-            .position(|ch| ch == &current_label)
-            .or_else(|| chapter_labels.iter().position(|ch| ch == &latest_available))
-            .unwrap_or(0);
-
-        let idx = if skip_selection {
-            skip_selection = false;
-            default_idx
-        } else {
-            let selection = FuzzySelect::with_theme(&theme)
-                .with_prompt("Chapter to read (type to search, Esc to cancel)")
-                .items(&chapter_labels)
-                .default(default_idx)
-                .interact_opt()?;
-            let Some(i) = selection else {
-                println!("Exiting reading loop.");
-                return Ok(());
-            };
-            i
-        };
-
-        let chosen_label = chapter_labels[idx].clone();
-        let chapter_id = chapters[idx].id.clone();
-        let auto_advance = idx == default_idx;
-
-        let pages = match client
-            .fetch_pages(&manga.id, translation, &chapter_id)
-            .await
-        {
-            Ok(pages) => pages,
-            Err(err) => {
-                eprintln!(
-                    "Failed to fetch pages for chapter {}: {}",
-                    chosen_label, err
-                );
-                continue;
-            }
-        };
-
-        if pages.is_empty() {
-            eprintln!("No pages found for chapter {}.", chosen_label);
-            continue;
-        }
-
-        let next_candidate = next_episode_label_presorted(&chosen_label, &sorted_labels);
-        let cache_state = match cache_manga_pages(
-            &pages,
-            &manga.id,
-            translation,
-            &chosen_label,
-            cache_base_override,
-            INITIAL_MANGA_PAGE_PRELOAD,
-        )
-        .await
-        {
-            Ok(state) => {
-                let cached_count = state.cached_pages.iter().filter(|p| p.is_some()).count();
-                if cached_count > 0 {
-                    println!("Caching chapter pages locally...");
-                    println!(
-                        "Cached {cached_count}/{} pages upfront for Chapter {} (first {} pages).",
-                        pages.len(),
-                        chosen_label,
-                        INITIAL_MANGA_PAGE_PRELOAD
-                    );
-                    if pages.len() > INITIAL_MANGA_PAGE_PRELOAD {
-                        println!("Continuing to cache remaining pages in background...");
-                    }
-                }
-                state
-            }
-            Err(err) => {
-                eprintln!(
-                    "Page cache unavailable for Chapter {} ({}). Falling back to streaming URLs.",
-                    chosen_label, err
-                );
-                MangaCacheState {
-                    cached_pages: vec![None; pages.len()],
-                    cache_files: Vec::new(),
-                    cdn_blocked: false,
-                }
-            }
-        };
-
-        if cache_state.cdn_blocked {
-            if auto_advance {
-                if let Some(next) = next_candidate {
-                    current_label = next;
-                }
-            }
-            continue;
-        }
-
-        launch_image_viewer(
-            &pages,
-            &cache_state.cached_pages,
-            &cache_state.cache_files,
-            &manga.title,
-            &chosen_label,
-        )
-        .await?;
-
-        history.upsert(HistoryEntry {
-            show_id: manga.id.clone(),
-            show_title: manga.title.clone(),
-            episode: chosen_label.clone(),
-            translation,
-            provider,
-            is_manga: true,
-            watched_at: Utc::now(),
-        });
-        history.save(history_path)?;
-
-        match (auto_advance, next_candidate) {
-            (true, Some(next)) => current_label = next,
-            (true, None) => {
-                println!("No further chapters found. Exiting.");
-                return Ok(());
-            }
-            (false, candidate) => current_label = candidate.unwrap_or(chosen_label),
-        }
-    }
-}
-
-async fn run_anime_flow<P: SyncProvider>(
-    cli: &Cli,
-    translation: Translation,
-    history_mode: bool,
-    history: &mut History,
-    history_path: &Path,
-    player: String,
-    sync_provider: Option<&P>,
-    binge: bool,
-) -> Result<()> {
-    let client = AllAnimeClient::new()?;
-
-    if history_mode {
-        if let Some(entry) = history.select_entry()? {
-            if entry.is_manga {
-                let manga_info = MangaInfo {
-                    id: entry.show_id.clone(),
-                    title: entry.show_title.clone(),
-                    available_chapters: ChapterCounts::default(),
-                };
-                match entry.provider {
-                    Provider::Allanime => {
-                        read_manga(
-                            &AllAnimeClient::new()?,
-                            entry.translation,
-                            manga_info,
-                            history,
-                            history_path,
-                            Some(entry.episode.clone()),
-                            cli.cache_dir.as_deref(),
-                            entry.provider,
-                        )
-                        .await?
-                    }
-                    Provider::Mangadex => {
-                        read_manga(
-                            &MangaDexClient::new()?,
-                            entry.translation,
-                            manga_info,
-                            history,
-                            history_path,
-                            Some(entry.episode.clone()),
-                            cli.cache_dir.as_deref(),
-                            entry.provider,
-                        )
-                        .await?
-                    }
-                    Provider::Mangapill => {
-                        read_manga(
-                            &MangapillClient::new()?,
-                            entry.translation,
-                            manga_info,
-                            history,
-                            history_path,
-                            Some(entry.episode.clone()),
-                            cli.cache_dir.as_deref(),
-                            entry.provider,
-                        )
-                        .await?
-                    }
-                }
-            } else {
-                play_show(
-                    &client,
-                    history,
-                    history_path,
-                    entry.translation,
-                    Provider::Allanime,
-                    ShowInfo {
-                        id: entry.show_id.clone(),
-                        title: entry.show_title.clone(),
-                        available_eps: EpisodeCounts::default(),
-                    },
-                    Some(entry.episode.clone()),
-                    &player,
-                    sync_provider,
-                    binge,
-                )
-                .await?;
-            }
-        }
-        return Ok(());
-    }
-
-    if cli.query.is_empty() {
-        println!("No query provided. Use `anv <name>` to search, or `anv history` to resume.");
-        return Ok(());
-    }
-
-    let query = cli.query.join(" ");
-    let shows = client.search_shows(&query, translation).await?;
-    if shows.is_empty() {
-        bail!("No results for \"{}\" ({})", query, translation.label());
-    }
-
-    let theme = theme();
-    let options: Vec<String> = shows
-        .iter()
-        .map(|s| {
-            let count = match translation {
-                Translation::Sub => s.available_eps.sub,
-                Translation::Dub => s.available_eps.dub,
-                Translation::Raw => 0,
-            };
-            format!("{} [{} episodes]", s.title, count)
-        })
-        .collect();
-    let selection = Select::with_theme(&theme)
-        .with_prompt("Select a show (Esc to cancel)")
-        .items(&options)
-        .default(0)
-        .interact_opt()?;
-    let Some(idx) = selection else {
-        println!("Cancelled.");
-        return Ok(());
-    };
-    let show = shows[idx].clone();
-    play_show(
-        &client,
-        history,
-        history_path,
-        translation,
-        Provider::Allanime,
-        show,
-        cli.episode.clone(),
-        &player,
-        sync_provider,
-        binge,
-    )
-    .await
-}
-
-async fn play_show<P: SyncProvider>(
-    client: &impl AnimeProvider,
-    history: &mut History,
-    history_path: &Path,
-    translation: Translation,
-    provider: Provider,
-    show: ShowInfo,
-    prefer_episode: Option<String>,
-    player: &str,
-    sync_provider: Option<&P>,
-    binge: bool,
-) -> Result<()> {
-    let episodes = client.fetch_episodes(&show.id, translation).await?;
-    if episodes.is_empty() {
-        bail!(
-            "No {} episodes available for {}",
-            translation.label(),
-            show.title
-        );
-    }
-
-    let sorted_episodes = sorted_episode_labels(&episodes);
-
-    let latest_available = sorted_episodes
-        .last()
-        .cloned()
-        .expect("episodes is non-empty; bail!() above ensures this");
-    println!(
-        "Found {} {} episodes. Latest available: {}.",
-        episodes.len(),
-        translation.label(),
-        latest_available
-    );
-
-    let last_watched = history.last_episode(&show.id, translation);
-    if let Some(prev) = &last_watched {
-        println!("Last watched {} episode: {}.", translation.label(), prev);
-    }
-
-    let fallback = last_watched.unwrap_or_else(|| latest_available.clone());
-    let (mut current_episode, mut skip_selection) = match &prefer_episode {
-        Some(ep) if episodes.contains(ep) => (ep.clone(), true),
-        Some(ep) => {
-            println!(
-                "Episode '{}' does not exist for '{}'. Showing episode list.",
-                ep, show.title
-            );
-            (fallback, false)
-        }
-        None => (fallback, false),
-    };
-
-    let theme = theme();
-    loop {
-        let default_idx = episodes
-            .iter()
-            .position(|ep| ep == &current_episode)
-            .or_else(|| episodes.iter().position(|ep| ep == &latest_available))
-            .unwrap_or(0);
-
-        let idx = if skip_selection || binge {
-            // skip_selection is set on the very first iteration when --episode
-            // was given. binge keeps skipping on every subsequent iteration.
-            skip_selection = false;
-            default_idx
-        } else {
-            let selection = FuzzySelect::with_theme(&theme)
-                .with_prompt("Episode to play (type to search, Esc to cancel)")
-                .items(&episodes)
-                .default(default_idx)
-                .interact_opt()?;
-            let Some(i) = selection else {
-                println!("Exiting playback loop.");
-                return Ok(());
-            };
-            i
-        };
-
-        let chosen = episodes[idx].clone();
-        let auto_advance = idx == default_idx;
-
-        println!("Fetching streams for episode {}...", chosen);
-        let streams = match client.fetch_streams(&show.id, translation, &chosen).await {
-            Ok(streams) => streams,
-            Err(err) => {
-                if let Some(req_err) = err.downcast_ref::<reqwest::Error>() {
-                    if req_err.status() == Some(StatusCode::BAD_REQUEST) {
-                        eprintln!(
-                            "Episode {chosen} is not yet available for {} translation.",
-                            translation.label()
-                        );
-                        current_episode = latest_available.clone();
-                        continue;
-                    }
-                }
-                eprintln!("Error fetching streams: {}", err);
-                continue;
-            }
-        };
-
-        if streams.is_empty() {
-            eprintln!(
-                "No supported streams found for episode {chosen}. Try another episode or rerun later."
-            );
-            current_episode = latest_available.clone();
-            continue;
-        }
-
-        let Some(stream) = choose_stream(streams)? else {
-            continue;
-        };
-
-        let next_candidate = next_episode_label_presorted(&chosen, &sorted_episodes);
-
-        launch_player(&stream, &show.title, &chosen, player).await?;
-
-        history.upsert(HistoryEntry {
-            show_id: show.id.clone(),
-            show_title: show.title.clone(),
-            episode: chosen.clone(),
-            translation,
-            provider,
-            is_manga: false,
-            watched_at: Utc::now(),
-        });
-        history.save(history_path)?;
-
-        // Sync the episode with the configured list provider.
-        if let Some(provider) = sync_provider {
-            let ep_num = chosen.parse::<u32>().unwrap_or(0);
-            if let Err(err) = provider.sync_episode(&show.id, &show.title, ep_num).await {
-                eprintln!("[sync] error: {err}");
-            }
-        }
-
-        match (auto_advance || binge, next_candidate) {
-            (true, Some(next)) => current_episode = next,
-            (true, None) => {
-                println!("No further episodes found. Exiting.");
-                return Ok(());
-            }
-            (false, candidate) => current_episode = candidate.unwrap_or(chosen),
-        }
-    }
-}
-
-fn parse_episode_key(label: &str) -> f64 {
-    label.parse::<f64>().unwrap_or(0.0)
-}
-
-fn sorted_episode_labels(episodes: &[String]) -> Vec<String> {
-    let mut sorted = episodes.to_vec();
-    sorted.sort_by(|a, b| {
-        parse_episode_key(a)
-            .partial_cmp(&parse_episode_key(b))
-            .unwrap_or(Ordering::Equal)
-    });
-    sorted.dedup();
-    sorted
-}
-
-fn next_episode_label_presorted(current: &str, sorted: &[String]) -> Option<String> {
-    let pos = sorted.iter().position(|ep| ep == current)?;
-    sorted.get(pos + 1).cloned()
 }

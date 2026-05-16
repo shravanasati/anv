@@ -143,6 +143,8 @@ pub struct MalWatchlistEntry {
     pub num_episodes: u32,
     /// Airing status: `"finished_airing"`, `"currently_airing"`, or `"not_yet_aired"`.
     pub airing_status: String,
+    /// Number of episodes watched (from user's list status), if available.
+    pub num_episodes_watched: Option<u32>,
 }
 
 
@@ -156,6 +158,7 @@ struct AnimelistResponse {
 #[derive(Debug, Deserialize)]
 struct AnimelistNode {
     node: AnimelistDetail,
+    list_status: Option<CurrentListStatus>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -636,11 +639,19 @@ impl MalClient {
         })
     }
 
-    /// Fetch all anime with `plan_to_watch` status from the authenticated user's MAL list.
     pub async fn fetch_plan_to_watch(&self) -> Result<Vec<MalWatchlistEntry>> {
+        self.fetch_list("plan_to_watch").await
+    }
+
+    pub async fn fetch_watching(&self) -> Result<Vec<MalWatchlistEntry>> {
+        self.fetch_list("watching").await
+    }
+
+    async fn fetch_list(&self, status: &str) -> Result<Vec<MalWatchlistEntry>> {
         let mut entries: Vec<MalWatchlistEntry> = Vec::new();
         let mut next_url: Option<String> = Some(format!(
-            "{MAL_API_BASE}/users/@me/animelist?status=plan_to_watch&limit=100&fields=num_episodes,status"
+            "{MAL_API_BASE}/users/@me/animelist?status={}&limit=100&fields=num_episodes,status,list_status",
+            status
         ));
 
         while let Some(url) = next_url {
@@ -667,6 +678,7 @@ impl MalClient {
                     title: node.node.title,
                     num_episodes: node.node.num_episodes,
                     airing_status: node.node.status,
+                    num_episodes_watched: node.list_status.map(|s| s.num_episodes_watched),
                 });
             }
 

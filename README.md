@@ -201,6 +201,10 @@ After each episode finishes playing:
 - History file corrupted: delete the JSON under your data dir and anv recreates it on launch.
 - MAL sync not working: run `anv sync status` to check token state, then `anv sync enable mal` to re-authenticate if needed.
 
+## Credits
+
+anv was originally inspired by and started as a port of [ani-cli](https://github.com/pystardust/ani-cli).
+
 ## License
 
 Released under the [MIT License](LICENSE). Have fun, stay hydrated, and don't skip the ending songs.
