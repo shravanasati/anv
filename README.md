@@ -5,18 +5,6 @@
 
 anv is a terminal-native anime launcher for people who think tmux panes and watchlists belong together. Point it at a title, pick your episode, and drop straight into `mpv` without touching a browser tab.
 
-## Why terminal otaku dig it
-- Curated for AllAnime streams – fast GraphQL search with zero spoiler thumbnails.
-- Sub or dub on demand via `--dub`; switches the query and history tagging automatically.
-- Episode selector behaves like a shell picker: arrow keys, `Enter`, `Esc` to bail.
-- Remembers what you watched last night, including translation choice – `anv history` drops you right back in.
-- Reads manga too – `anv --manga` fetches chapters and pipes pages directly to your image viewer (mpv by default).
-- Manga page cache supports custom location via `--cache-dir`.
-- Jump directly to an episode with `-e` or `--episode` to skip the selection menu.
-- Fires up `mpv` (or whatever you set as `player` in config) with the highest-quality stream it can negotiate.
-- Syncs watch progress to MyAnimeList – sets start/finish dates, marks completed automatically.
-- Browse your MAL **Plan to Watch** list with `anv watchlist` and start streaming in one step – no separate search needed.
-
 ## Install it
 
 ### Install prebuilt binaries via shell script
@@ -99,14 +87,51 @@ Same, but start dubbed and jump to episode 1:
 anv watchlist -d -e 1
 ```
 
+Browse your MAL Currently Watching list:
+```bash
+anv watching
+```
+
+Same, but automatically pick the next episode based on your MAL progress (`-e` supported too):
+```bash
+anv watching -n
+```
+
+
 Set a custom player (e.g. tuned mpv build):
 ```bash
 # via environment variable
 export ANV_PLAYER="/usr/bin/mpv --ytdl-format=best"
 anv "naruto"
 
-# or permanently in ~/.config/anv/config.toml
-# player = "/usr/bin/mpv --ytdl-format=best"
+# or permanently in ~/.config/anv/config.toml (see Configuration section)
+```
+
+## Configuration
+
+The config file lives at `~/.config/anv/config.toml` (Linux/macOS) or `%APPDATA%\anv\config.toml` (Windows).
+
+```toml
+# player — media player command (default: "mpv")
+#           also overridable with ANV_PLAYER env var
+player = "mpv"
+
+# binge          — set to true to auto-play the next episode without prompting
+#                  (can also be enabled per-session with the --binge flag)
+binge = false
+
+# auto_play_next — set to true to automatically resume from the next episode
+#                  instead of the last watched episode in history/watchlist
+auto_play_next = false
+
+[mal]
+# client_id — your MAL API client ID
+#               register at https://myanimelist.net/apiconfig
+#               redirect URI must be: http://localhost:11422/callback
+client_id = "<your-client-id>"
+
+[sync]
+enabled = false
 ```
 
 ## MAL sync
@@ -125,15 +150,7 @@ Copy the **Client ID**.
 
 **2. Add it to your config**
 
-The config file lives at `~/.config/anv/config.toml` (Linux/macOS) or `%APPDATA%\anv\config.toml` (Windows).
-
-```toml
-[mal]
-client_id = "<your-client-id>"
-
-[sync]
-enabled = true
-```
+Set your `client_id` and `sync.enabled = true` in the configuration file (see the [Configuration](#configuration) section above).
 
 **3. Authenticate**
 
@@ -150,21 +167,29 @@ This opens your browser to the MAL authorisation page. After you approve, the to
 | `anv sync enable mal` | Authenticate with MAL (runs OAuth flow if no token stored) |
 | `anv sync status` | Show whether sync is enabled, token validity, and expiry |
 | `anv sync disable` | Disable sync (`sync.enabled = false` in config) |
+| `anv watching` | Browse your "Currently Watching" list from MAL |
+| `anv watchlist` | Browse your "Plan to Watch" list from MAL |
 
-### Watchlist
+### Watchlist and Currently Watching
 
-`anv watchlist` pulls your **Plan to Watch** list directly from MAL and lets you pick a title to stream — no search step required.
+`anv watching` and `anv watchlist` pull your lists directly from MAL and let you pick a title to stream — no search step required.
 
 ```bash
-anv watchlist          # sub (default)
+anv watching           # resume from Currently Watching
+anv watching -n        # auto-increment to next episode
+anv watchlist          # pick from Plan to Watch (default: sub)
 anv watchlist -d       # dubbed
 anv watchlist -b       # binge mode
 anv watchlist -e 5     # start at episode 5
 ```
 
-**What it shows:** only titles that are currently airing or have finished airing. Anime that hasn't premiered yet (`not_yet_aired`) is automatically hidden so the list stays actionable. Each entry shows an episode count and a `· airing` or `· finished` tag.
+**What it shows:**
+- **Watching:** shows titles you're currently watching, including your current progress (e.g., `[3/12 ep]`).
+- **Watchlist:** shows titles that are currently airing or have finished airing from your "Plan to Watch" list.
 
-### How sync works
+Anime that hasn't premiered yet (`not_yet_aired`) is automatically hidden so the list stays actionable. Each entry shows an episode count and relevant status tags.
+
+<!-- ### How sync works
 
 After each episode finishes playing:
 
@@ -172,25 +197,27 @@ After each episode finishes playing:
 2. **Progress update** — if the status on MAL is already `watching` and only the episode count changes, anv updates silently with no prompt. If the status is changing (e.g. adding to list for the first time, or reaching the final episode), anv asks for confirmation first.
 3. **Dates are set automatically:**
    - `start_date` is sent when you first start watching (not on list, or previously `plan_to_watch`).
-   - `finish_date` is sent when anv marks the show as `completed`.
+   - `finish_date` is sent when anv marks the show as `completed`. -->
 
-## How the flow feels
+<!-- ## How the flow feels
 
 1. CLI asks AllAnime for matching series and shows you a clean list.
 2. Pick a show; anv fetches available episode numbers for the chosen translation.
 3. Episode picker highlights your last watched entry so Enter instantly resumes; Esc backs out like a prompt should.
 4. Streams are resolved through AllAnime's clock API and piped to `mpv` with the right headers and subtitles.
 5. History gets updated in `~/.local/share/anv/history.json` (Linux; platform-specific on others) so the next session remembers everything.
-6. If MAL sync is enabled, watch progress is synced silently or with a brief confirmation depending on what changed.
+6. If MAL sync is enabled, watch progress is synced silently or with a brief confirmation depending on what changed. -->
 
 ## Tips and tweaks
 - Keep `mpv` upgraded – some providers only serve DASH/HLS variants that older builds struggle with.
 - If you want to experiment with custom players, set `player` in `~/.config/anv/config.toml` or use the `ANV_PLAYER` environment variable (env overrides config).
 - Use `--cache-dir <DIR>` if you want manga page cache files somewhere specific (faster disk, larger partition, etc.).
 - Use `-e <EP>` to skip the interactive episode selector and start playing a specific episode immediately.
+- Use `-n` or `--next-episode` to automatically resume from the next episode based on your history or MAL status.
+- Set `auto_play_next = true` in your config to make `-n` the default behavior.
 - Run `anv-update` to pull the latest release whenever streams break or a new AllAnime quirk surfaces.
 - Run `anv sync status` to quickly check if your MAL token is still valid before a long watch session.
-- `anv watchlist` is the fastest path from "what should I watch?" to actually watching it — the MAL→AllAnime mapping is cached after the first run, so subsequent launches are instant.
+- `anv watching` and `anv watchlist` are the fastest paths from "what should I watch?" to actually watching it — the MAL→AllAnime mapping is cached after the first run, so subsequent launches are instant.
 
 ## Troubleshooting
 
