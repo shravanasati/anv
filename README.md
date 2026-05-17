@@ -169,7 +169,7 @@ Copy the **Client ID**.
 
 **2. Add it to your config**
 
-Set your `client_id` and `sync.enabled = true` in the configuration file (see the [Configuration](#configuration) section above).
+Set your `client_id` in the configuration file (see the [Configuration](#configuration) section above).
 
 **3. Authenticate**
 

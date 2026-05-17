@@ -1,13 +1,13 @@
-use std::path::Path;
 use anyhow::{Context, Result, bail};
+use std::path::Path;
 
 use crate::Cli;
+use crate::cmd::anime::play_show;
 use crate::config::AppConfig;
 use crate::history::{History, theme};
 use crate::providers::{AnimeProvider, allanime::AllAnimeClient};
 use crate::sync::mal::{MalClient, MalToken, MalWatchlistEntry};
 use crate::types::{EpisodeCounts, Provider, ShowInfo, Translation};
-use crate::cmd::anime::play_show;
 
 use crate::aniskip::SkipOptions;
 
@@ -66,8 +66,8 @@ pub async fn run_mal_list(
                     };
                     let status_tag = match e.airing_status.as_str() {
                         "currently_airing" => " · airing",
-                        "finished_airing"  => " · finished",
-                        _                  => "",
+                        "finished_airing" => " · finished",
+                        _ => "",
                     };
                     format!("{} [{}{}]", e.title, ep_count, status_tag)
                 }
@@ -94,13 +94,19 @@ pub async fn run_mal_list(
             println!("Searching AllAnime for \"{}\"...", entry.title);
             let results = allanime.search_shows(&entry.title, translation).await?;
 
-            if let Some(matched) = results.iter().find(|s| s.mal_id.as_deref() == Some(&entry.mal_id.to_string())) {
+            if let Some(matched) = results
+                .iter()
+                .find(|s| s.mal_id.as_deref() == Some(&entry.mal_id.to_string()))
+            {
                 mal_client.cache_allanime_id(&matched.id, entry.mal_id);
                 (matched.id.clone(), matched.mal_id.clone())
             } else {
                 match results.len() {
                     0 => {
-                        println!("No AllAnime results for \"{}\". Try a different search query (or Esc to go back).", entry.title);
+                        println!(
+                            "No AllAnime results for \"{}\". Try a different search query (or Esc to go back).",
+                            entry.title
+                        );
                         let query: String = dialoguer::Input::with_theme(&theme)
                             .with_prompt("Search query")
                             .allow_empty(true)
@@ -118,7 +124,10 @@ pub async fn run_mal_list(
                             .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
                             .collect();
                         let pick = dialoguer::Select::with_theme(&theme)
-                            .with_prompt(format!("Which AllAnime entry matches \"{}\"? (Esc = back)", entry.title))
+                            .with_prompt(format!(
+                                "Which AllAnime entry matches \"{}\"? (Esc = back)",
+                                entry.title
+                            ))
                             .items(&opts)
                             .default(0)
                             .interact_opt()?;
@@ -133,7 +142,10 @@ pub async fn run_mal_list(
                             .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
                             .collect();
                         let pick = dialoguer::Select::with_theme(&theme)
-                            .with_prompt(format!("Which AllAnime entry matches \"{}\"? (Esc = back)", entry.title))
+                            .with_prompt(format!(
+                                "Which AllAnime entry matches \"{}\"? (Esc = back)",
+                                entry.title
+                            ))
                             .items(&opts)
                             .default(0)
                             .interact_opt()?;
@@ -174,7 +186,7 @@ pub async fn run_mal_list(
     }
 }
 
-pub async fn run_sync_enable_mal(cfg: &AppConfig) -> Result<()> {
+pub async fn run_sync_enable_mal(mut cfg: AppConfig) -> Result<()> {
     if cfg.mal.client_id.is_empty() {
         bail!(
             "MAL client_id is not set.\n\
@@ -195,36 +207,35 @@ pub async fn run_sync_enable_mal(cfg: &AppConfig) -> Result<()> {
     match MalToken::load()? {
         Some(token) if !token.is_expired() => {
             println!("Already authenticated with MyAnimeList.");
-            println!(
-                "To activate sync, set `sync.enabled = true` in your config:\n  {}",
-                AppConfig::config_path()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|_| "<unknown>".into())
-            );
+            if !cfg.sync.enabled {
+                cfg.sync.enabled = true;
+                cfg.save().context("failed to save config")?;
+                println!("Sync enabled in config.");
+            } else {
+                println!("Sync is already enabled.");
+            }
             return Ok(());
         }
         _ => {}
     }
 
     let client_id = cfg.mal.client_id.clone();
-    let token = MalClient::authenticate(&client_id)
+    let _token = MalClient::authenticate(&client_id)
         .await
         .context("MAL OAuth flow failed")?;
 
-    println!("\n✓ Successfully authenticated with MyAnimeList!");
+    println!("\n Successfully authenticated with MyAnimeList!");
     println!(
         "Token stored at: {}",
         MalToken::token_path()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "<unknown>".into())
     );
-    println!(
-        "\nTo activate sync, set `sync.enabled = true` in:\n  {}",
-        AppConfig::config_path()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "<unknown>".into())
-    );
-    let _ = token;
+
+    cfg.sync.enabled = true;
+    cfg.save().context("failed to save config")?;
+    println!("Sync enabled in config.");
+
     Ok(())
 }
 
@@ -270,11 +281,6 @@ pub async fn run_sync_disable(mut cfg: AppConfig) -> Result<()> {
     }
     cfg.sync.enabled = false;
     cfg.save().context("failed to save config")?;
-    println!(
-        "Sync disabled. Edit {} to re-enable.",
-        AppConfig::config_path()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "<unknown>".into())
-    );
+    println!("Sync disabled. Run `anv sync enable mal` to re-enable.");
     Ok(())
 }

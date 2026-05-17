@@ -99,7 +99,7 @@ impl MalIdCache {
     }
 
     /// Reverse lookup: given a MAL anime ID, return the AllAnime show ID if it
-    /// was previously cached 
+    /// was previously cached
     pub fn get_allanime_id(&self, mal_id: u32) -> Option<String> {
         self.entries
             .iter()
@@ -146,7 +146,6 @@ pub struct MalWatchlistEntry {
     /// Number of episodes watched (from user's list status), if available.
     pub num_episodes_watched: Option<u32>,
 }
-
 
 #[derive(Debug, Deserialize)]
 struct AnimelistResponse {
@@ -398,7 +397,13 @@ impl MalClient {
     fn sanitize_query(query: &str) -> String {
         query
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { ' ' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == ' ' || c == '-' {
+                    c
+                } else {
+                    ' '
+                }
+            })
             .collect::<String>()
             .split_whitespace()
             .collect::<Vec<_>>()

@@ -5,7 +5,8 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    process::Command, time::Duration,
+    process::Command,
+    time::Duration,
 };
 
 use crate::providers::USER_AGENT;

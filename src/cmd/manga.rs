@@ -1,7 +1,7 @@
-use std::path::Path;
 use anyhow::{Result, bail};
 use chrono::Utc;
-use dialoguer::{Select, FuzzySelect};
+use dialoguer::{FuzzySelect, Select};
+use std::path::Path;
 
 use crate::Cli;
 use crate::cache::{MangaCacheState, cache_manga_pages};
@@ -10,7 +10,7 @@ use crate::history::{History, HistoryEntry, theme};
 use crate::player::launch_image_viewer;
 use crate::providers::MangaProvider;
 use crate::types::{MangaInfo, Provider, Translation};
-use crate::utils::{sorted_episode_labels, next_episode_label_presorted};
+use crate::utils::{next_episode_label_presorted, sorted_episode_labels};
 
 const INITIAL_MANGA_PAGE_PRELOAD: usize = 5;
 
@@ -125,7 +125,9 @@ pub async fn read_manga(
         println!("Last read {} chapter: {}.", translation.label(), prev);
     }
 
-    let fallback = last_read.clone().unwrap_or_else(|| latest_available.clone());
+    let fallback = last_read
+        .clone()
+        .unwrap_or_else(|| latest_available.clone());
     let (mut current_label, mut skip_selection) = match &prefer_chapter {
         Some(ch) if chapter_labels.contains(ch) => (ch.clone(), true),
         Some(ch) => {

@@ -4,10 +4,10 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use config::AppConfig;
 
+mod aniskip;
 mod cache;
 mod cmd;
 mod config;
-mod aniskip;
 mod history;
 mod player;
 mod providers;
@@ -17,13 +17,9 @@ mod types;
 mod utils;
 
 use history::{History, history_path};
-use providers::{
-    allanime::AllAnimeClient, mangadex::MangaDexClient,
-    mangapill::MangapillClient,
-};
+use providers::{allanime::AllAnimeClient, mangadex::MangaDexClient, mangapill::MangapillClient};
 use sync::mal::build_mal_client_if_enabled;
 use types::{Provider, Translation};
-
 
 #[derive(Debug, Parser)]
 #[command(
@@ -164,7 +160,7 @@ pub enum SyncAction {
     },
     /// Show current sync status and MAL authentication state.
     Status,
-    /// Disable MAL sync and write the updated config (can be re-enabled manually).
+    /// Disable MAL sync and write the updated config.
     Disable,
 }
 
@@ -191,7 +187,10 @@ async fn run() -> Result<()> {
 
     // Handle subcommands
     match &cli.command {
-        Some(Commands::History { binge: history_binge, next_episode: history_next }) => {
+        Some(Commands::History {
+            binge: history_binge,
+            next_episode: history_next,
+        }) => {
             let history_path = history_path()?;
             let mut history = History::load(&history_path)?;
             let mal_client = build_mal_client_if_enabled(&cfg).await;
@@ -210,20 +209,28 @@ async fn run() -> Result<()> {
             )
             .await;
         }
-        Some(Commands::Watchlist { binge: wl_binge, dub: wl_dub, episode: wl_episode, next_episode: wl_next }) => {
+        Some(Commands::Watchlist {
+            binge: wl_binge,
+            dub: wl_dub,
+            episode: wl_episode,
+            next_episode: wl_next,
+        }) => {
             let history_path = history_path()?;
             let mut history = History::load(&history_path)?;
             let mal_client = build_mal_client_if_enabled(&cfg).await;
             let binge = *wl_binge || cli.binge || cfg.binge;
             let auto_play_next = *wl_next || cfg.auto_play_next;
-            let translation = if *wl_dub || cli.dub { Translation::Dub } else { Translation::Sub };
+            let translation = if *wl_dub || cli.dub {
+                Translation::Dub
+            } else {
+                Translation::Sub
+            };
             let episode = wl_episode.clone().or_else(|| cli.episode.clone());
             return match mal_client.as_ref() {
                 None => {
                     eprintln!(
                         "error: MAL sync is not configured.\n\
-                         Run `anv sync enable mal` to authenticate, then set\n\
-                         `sync.enabled = true` in your config."
+                         Run `anv sync enable mal` to authenticate."
                     );
                     Ok(())
                 }
@@ -245,20 +252,28 @@ async fn run() -> Result<()> {
                 }
             };
         }
-        Some(Commands::Watching { binge: w_binge, dub: w_dub, episode: w_episode, next_episode: w_next }) => {
+        Some(Commands::Watching {
+            binge: w_binge,
+            dub: w_dub,
+            episode: w_episode,
+            next_episode: w_next,
+        }) => {
             let history_path = history_path()?;
             let mut history = History::load(&history_path)?;
             let mal_client = build_mal_client_if_enabled(&cfg).await;
             let binge = *w_binge || cli.binge || cfg.binge;
             let auto_play_next = *w_next || cfg.auto_play_next;
-            let translation = if *w_dub || cli.dub { Translation::Dub } else { Translation::Sub };
+            let translation = if *w_dub || cli.dub {
+                Translation::Dub
+            } else {
+                Translation::Sub
+            };
             let episode = w_episode.clone().or_else(|| cli.episode.clone());
             return match mal_client.as_ref() {
                 None => {
                     eprintln!(
                         "error: MAL sync is not configured.\n\
-                         Run `anv sync enable mal` to authenticate, then set\n\
-                         `sync.enabled = true` in your config."
+                         Run `anv sync enable mal` to authenticate."
                     );
                     Ok(())
                 }
@@ -285,7 +300,7 @@ async fn run() -> Result<()> {
                 SyncAction::Enable {
                     provider: SyncProviderCmd::Mal,
                 },
-        }) => return cmd::sync::run_sync_enable_mal(&cfg).await,
+        }) => return cmd::sync::run_sync_enable_mal(cfg).await,
         Some(Commands::Sync {
             action: SyncAction::Status,
         }) => return cmd::sync::run_sync_status(&cfg),
@@ -310,18 +325,42 @@ async fn run() -> Result<()> {
         match cli.provider {
             Provider::Allanime => {
                 let client = AllAnimeClient::new()?;
-                return cmd::manga::run_manga_flow(&cli, translation, &mut history, &history_path, &client, cfg.auto_play_next, &cfg)
-                    .await;
+                return cmd::manga::run_manga_flow(
+                    &cli,
+                    translation,
+                    &mut history,
+                    &history_path,
+                    &client,
+                    cfg.auto_play_next,
+                    &cfg,
+                )
+                .await;
             }
             Provider::Mangadex => {
                 let client = MangaDexClient::new()?;
-                return cmd::manga::run_manga_flow(&cli, translation, &mut history, &history_path, &client, cfg.auto_play_next, &cfg)
-                    .await;
+                return cmd::manga::run_manga_flow(
+                    &cli,
+                    translation,
+                    &mut history,
+                    &history_path,
+                    &client,
+                    cfg.auto_play_next,
+                    &cfg,
+                )
+                .await;
             }
             Provider::Mangapill => {
                 let client = MangapillClient::new()?;
-                return cmd::manga::run_manga_flow(&cli, translation, &mut history, &history_path, &client, cfg.auto_play_next, &cfg)
-                    .await;
+                return cmd::manga::run_manga_flow(
+                    &cli,
+                    translation,
+                    &mut history,
+                    &history_path,
+                    &client,
+                    cfg.auto_play_next,
+                    &cfg,
+                )
+                .await;
             }
         }
     }

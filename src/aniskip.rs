@@ -103,7 +103,8 @@ impl SkipCache {
 }
 
 fn get_aniskip_cache_path() -> Result<PathBuf> {
-    let base = dirs_next::cache_dir().ok_or_else(|| anyhow!("Could not determine cache directory"))?;
+    let base =
+        dirs_next::cache_dir().ok_or_else(|| anyhow!("Could not determine cache directory"))?;
     Ok(base.join("anv").join("aniskip_cache.json"))
 }
 
@@ -120,13 +121,17 @@ pub async fn fetch_skip_times(mal_id: &str, episode: &str) -> Result<SkipTimes> 
     }
 
     if debug {
-        eprintln!("[ANV_DEBUG] AniSkip cache miss for key: {}. Fetching from API...", cache_key);
+        eprintln!(
+            "[ANV_DEBUG] AniSkip cache miss for key: {}. Fetching from API...",
+            cache_key
+        );
     }
 
-    let url = format!("{}/{}/{}?types=op&types=ed&types=mixed-op&types=mixed-ed&types=recap&episodeLength=0", ANISKIP_API_BASE, mal_id, episode);
-    let client = reqwest::Client::builder()
-        .user_agent("anv")
-        .build()?;
+    let url = format!(
+        "{}/{}/{}?types=op&types=ed&types=mixed-op&types=mixed-ed&types=recap&episodeLength=0",
+        ANISKIP_API_BASE, mal_id, episode
+    );
+    let client = reqwest::Client::builder().user_agent("anv").build()?;
     let resp: AniskipResponse = client.get(url).send().await?.json().await?;
 
     let mut skip_times = SkipTimes::default();
@@ -147,7 +152,10 @@ pub async fn fetch_skip_times(mal_id: &str, episode: &str) -> Result<SkipTimes> 
     }
 
     if debug {
-        eprintln!("[ANV_DEBUG] AniSkip result for {}_{}: {:?}", mal_id, episode, skip_times);
+        eprintln!(
+            "[ANV_DEBUG] AniSkip result for {}_{}: {:?}",
+            mal_id, episode, skip_times
+        );
     }
 
     cache.entries.insert(cache_key, skip_times.clone());
@@ -172,8 +180,12 @@ pub async fn prepare_aniskip_args(
 ) -> Result<Vec<String>> {
     let skip_op = cli_opts.skip_op.unwrap_or(config.aniskip.skip_op);
     let skip_ed = cli_opts.skip_ed.unwrap_or(config.aniskip.skip_ed);
-    let skip_mixed_op = cli_opts.skip_mixed_op.unwrap_or(config.aniskip.skip_mixed_op);
-    let skip_mixed_ed = cli_opts.skip_mixed_ed.unwrap_or(config.aniskip.skip_mixed_ed);
+    let skip_mixed_op = cli_opts
+        .skip_mixed_op
+        .unwrap_or(config.aniskip.skip_mixed_op);
+    let skip_mixed_ed = cli_opts
+        .skip_mixed_ed
+        .unwrap_or(config.aniskip.skip_mixed_ed);
     let skip_recap = cli_opts.skip_recap.unwrap_or(config.aniskip.skip_recap);
 
     if !skip_op && !skip_ed && !skip_mixed_op && !skip_mixed_ed && !skip_recap {

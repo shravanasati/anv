@@ -24,13 +24,16 @@ const ALLANIME_BASE_URL: &str = "https://allanime.day";
 const ALLANIME_REFERER: &str = "https://allmanga.to";
 const ALLANIME_IMAGE_REFERER: &str = "https://allanime.to";
 const ALLANIME_ORIGIN: &str = "https://allanime.day";
-const EPISODE_SOURCES_HASH: &str = "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec";
+const EPISODE_SOURCES_HASH: &str =
+    "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec";
 
 // Providers known to yield direct HLS/MP4 URLs via the clock.json mechanism.
 // The remaining providers (Ok, Vg, Fm-Hls, Mp4, Sw, …) are JS-obfuscated iframe
 // embeds that require per-provider HTML/JS scraping to extract a playable URL —
 // not currently implemented. Luf-Mp4 and Yt-mp4 cover the vast majority of shows.
-const PREFERRED_PROVIDERS: &[&str] = &["Default", "S-mp4", "Luf-Mp4", "Yt-mp4", "Fm-mp4", "Fm-Hls", "Mp4"];
+const PREFERRED_PROVIDERS: &[&str] = &[
+    "Default", "S-mp4", "Luf-Mp4", "Yt-mp4", "Fm-mp4", "Fm-Hls", "Mp4",
+];
 
 pub struct AllAnimeClient {
     client: Client,
@@ -38,7 +41,10 @@ pub struct AllAnimeClient {
 
 impl AllAnimeClient {
     pub fn new() -> Result<Self> {
-        let client = Client::builder().user_agent(USER_AGENT).timeout(Duration::from_secs(30)).build()?;
+        let client = Client::builder()
+            .user_agent(USER_AGENT)
+            .timeout(Duration::from_secs(30))
+            .build()?;
         Ok(Self { client })
     }
 
@@ -114,9 +120,7 @@ impl AllAnimeClient {
         };
 
         let envelope: GraphQlEnvelope<T> = serde_json::from_str(&json_str).map_err(|e| {
-            anyhow!(
-                "failed to parse AllAnime API response: {e}\nJSON:\n{json_str}"
-            )
+            anyhow!("failed to parse AllAnime API response: {e}\nJSON:\n{json_str}")
         })?;
 
         Self::extract_data(envelope)
@@ -124,7 +128,10 @@ impl AllAnimeClient {
 
     /// POST a GraphQL request to the AllAnime API and deserialize the `data` field.
     async fn post_graphql<T: DeserializeOwned>(&self, body: &serde_json::Value) -> Result<T> {
-        let variables = body.get("variables").cloned().unwrap_or(serde_json::json!({}));
+        let variables = body
+            .get("variables")
+            .cloned()
+            .unwrap_or(serde_json::json!({}));
         let query = body.get("query").and_then(|v| v.as_str());
         self.execute_graphql(false, variables, query, None).await
     }
@@ -151,7 +158,12 @@ impl AllAnimeClient {
 
         // Try persisted query (GET) first.
         match self
-            .execute_graphql::<EpisodePayload>(true, variables.clone(), None, Some(EPISODE_SOURCES_HASH))
+            .execute_graphql::<EpisodePayload>(
+                true,
+                variables.clone(),
+                None,
+                Some(EPISODE_SOURCES_HASH),
+            )
             .await
         {
             Ok(payload) => Ok(payload.episode.source_urls),
@@ -237,7 +249,9 @@ impl AllAnimeClient {
 
             if decoded.contains("mp4upload.com") {
                 if debug {
-                    eprintln!("[ANV_DEBUG] fetch_streams: provider '{provider}' — Mp4Upload detected; scraping embed page");
+                    eprintln!(
+                        "[ANV_DEBUG] fetch_streams: provider '{provider}' — Mp4Upload detected; scraping embed page"
+                    );
                 }
                 let response = self
                     .client
@@ -264,7 +278,10 @@ impl AllAnimeClient {
                         is_hls: false,
                         headers: {
                             let mut h = HashMap::new();
-                            h.insert("Referer".to_string(), "https://www.mp4upload.com/".to_string());
+                            h.insert(
+                                "Referer".to_string(),
+                                "https://www.mp4upload.com/".to_string(),
+                            );
                             h
                         },
                         subtitle: None,
@@ -325,7 +342,10 @@ impl AllAnimeClient {
             let re_url = regex::Regex::new(r#""url"\s*:\s*"([^"]+)""#).unwrap();
             let re_height = regex::Regex::new(r#""height"\s*:\s*"?(\d+)"?"#).unwrap();
 
-            let urls: Vec<_> = re_url.captures_iter(&decrypted).map(|c| c[1].to_string()).collect();
+            let urls: Vec<_> = re_url
+                .captures_iter(&decrypted)
+                .map(|c| c[1].to_string())
+                .collect();
             let heights: Vec<_> = re_height
                 .captures_iter(&decrypted)
                 .map(|c| c[1].parse::<i32>().unwrap_or(0))
@@ -349,7 +369,9 @@ impl AllAnimeClient {
                 .collect()
         } else {
             if debug {
-                eprintln!("[ANV_DEBUG] fetch_streams: provider '{provider}' — unknown JSON format: {json}");
+                eprintln!(
+                    "[ANV_DEBUG] fetch_streams: provider '{provider}' — unknown JSON format: {json}"
+                );
             }
             bail!("unknown provider response format");
         };
@@ -460,7 +482,9 @@ impl AnimeProvider for AllAnimeClient {
                     debug,
                 ));
             } else if debug {
-                eprintln!("[ANV_DEBUG] fetch_streams: preferred provider '{provider_name}' not present in source list — skipping");
+                eprintln!(
+                    "[ANV_DEBUG] fetch_streams: preferred provider '{provider_name}' not present in source list — skipping"
+                );
             }
         }
 
@@ -661,7 +685,9 @@ fn decode_pair(pair: &str) -> Option<char> {
 fn decrypt_tobeparsed(blob: &str) -> Result<String> {
     let key = Sha256::digest(b"Xot36i3lK3:v1");
 
-    let raw = B64.decode(blob).map_err(|e| anyhow!("tobeparsed base64 decode failed: {e}"))?;
+    let raw = B64
+        .decode(blob)
+        .map_err(|e| anyhow!("tobeparsed base64 decode failed: {e}"))?;
     // Layout: [1-byte prefix][12-byte nonce][ciphertext][16-byte GCM tag]
     if raw.len() < 1 + 12 + 16 {
         bail!("tobeparsed blob too short ({} bytes)", raw.len());

@@ -1,19 +1,21 @@
-use std::path::Path;
 use anyhow::{Result, bail};
 use chrono::Utc;
 use dialoguer::Select;
 use reqwest::StatusCode;
+use std::path::Path;
 
 use crate::Cli;
 use crate::aniskip::SkipOptions;
+use crate::cmd::manga::read_manga;
 use crate::config::AppConfig;
 use crate::history::{History, HistoryEntry, theme};
 use crate::player::{choose_stream, launch_player};
-use crate::providers::{AnimeProvider, allanime::AllAnimeClient, mangadex::MangaDexClient, mangapill::MangapillClient};
+use crate::providers::{
+    AnimeProvider, allanime::AllAnimeClient, mangadex::MangaDexClient, mangapill::MangapillClient,
+};
 use crate::sync::SyncProvider;
 use crate::types::{ChapterCounts, EpisodeCounts, MangaInfo, Provider, ShowInfo, Translation};
-use crate::utils::{sorted_episode_labels, next_episode_label_presorted};
-use crate::cmd::manga::read_manga;
+use crate::utils::{next_episode_label_presorted, sorted_episode_labels};
 
 pub async fn run_anime_flow<P: SyncProvider>(
     cli: &Cli,
@@ -52,7 +54,11 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             manga_info,
                             history,
                             history_path,
-                            if auto_play_next { None } else { Some(entry.episode.clone()) },
+                            if auto_play_next {
+                                None
+                            } else {
+                                Some(entry.episode.clone())
+                            },
                             auto_play_next,
                             cli.cache_dir.as_deref(),
                             entry.provider,
@@ -67,7 +73,11 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             manga_info,
                             history,
                             history_path,
-                            if auto_play_next { None } else { Some(entry.episode.clone()) },
+                            if auto_play_next {
+                                None
+                            } else {
+                                Some(entry.episode.clone())
+                            },
                             auto_play_next,
                             cli.cache_dir.as_deref(),
                             entry.provider,
@@ -82,7 +92,11 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             manga_info,
                             history,
                             history_path,
-                            if auto_play_next { None } else { Some(entry.episode.clone()) },
+                            if auto_play_next {
+                                None
+                            } else {
+                                Some(entry.episode.clone())
+                            },
                             auto_play_next,
                             cli.cache_dir.as_deref(),
                             entry.provider,
@@ -104,8 +118,16 @@ pub async fn run_anime_flow<P: SyncProvider>(
                         mal_id: None,
                         available_eps: EpisodeCounts::default(),
                     },
-                    if auto_play_next { None } else { Some(entry.episode.clone()) },
-                    if auto_play_next { Some(entry.episode.clone()) } else { None },
+                    if auto_play_next {
+                        None
+                    } else {
+                        Some(entry.episode.clone())
+                    },
+                    if auto_play_next {
+                        Some(entry.episode.clone())
+                    } else {
+                        None
+                    },
                     auto_play_next,
                     sync_provider,
                     binge,
@@ -218,7 +240,9 @@ pub async fn play_show<P: SyncProvider>(
         println!("Last watched {} episode: {}.", translation.label(), prev);
     }
 
-    let fallback = last_watched.clone().unwrap_or_else(|| latest_available.clone());
+    let fallback = last_watched
+        .clone()
+        .unwrap_or_else(|| latest_available.clone());
     let (mut current_episode, mut skip_selection) = match &prefer_episode {
         Some(ep) if episodes.contains(ep) => (ep.clone(), true),
         Some(ep) => {
