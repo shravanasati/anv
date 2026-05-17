@@ -16,6 +16,9 @@ pub trait AnimeProvider {
         translation: Translation,
         episode: &str,
     ) -> Result<Vec<StreamOption>>;
+    async fn fetch_mal_id(&self, _show_id: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
 }
 
 pub trait MangaProvider {

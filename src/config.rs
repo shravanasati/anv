@@ -20,6 +20,27 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub sync: SyncConfig,
+
+    #[serde(default)]
+    pub aniskip: AniskipConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AniskipConfig {
+    #[serde(default = "default_true")]
+    pub skip_op: bool,
+
+    #[serde(default = "default_true")]
+    pub skip_ed: bool,
+
+    #[serde(default = "default_false")]
+    pub skip_mixed_op: bool,
+
+    #[serde(default = "default_false")]
+    pub skip_mixed_ed: bool,
+
+    #[serde(default = "default_false")]
+    pub skip_recap: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -37,6 +58,14 @@ pub struct SyncConfig {
 
 fn default_player() -> String {
     "mpv".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_false() -> bool {
+    false
 }
 
 const CONFIG_HEADER: &str = "# anv configuration
@@ -58,8 +87,27 @@ const CONFIG_HEADER: &str = "# anv configuration
 #
 # [sync]
 #   enabled — set to true to sync watch status to MAL after each episode
+#
+# [aniskip]
+#   skip_op       — skip opening (default: true)
+#   skip_ed       — skip ending (default: true)
+#   skip_mixed_op — skip mixed opening (default: false)
+#   skip_mixed_ed — skip mixed ending (default: false)
+#   skip_recap    — skip recap (default: false)
 
 ";
+
+impl Default for AniskipConfig {
+    fn default() -> Self {
+        Self {
+            skip_op: true,
+            skip_ed: true,
+            skip_mixed_op: false,
+            skip_mixed_ed: false,
+            skip_recap: false,
+        }
+    }
+}
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -69,6 +117,7 @@ impl Default for AppConfig {
             auto_play_next: false,
             mal: MalConfig::default(),
             sync: SyncConfig::default(),
+            aniskip: AniskipConfig::default(),
         }
     }
 }

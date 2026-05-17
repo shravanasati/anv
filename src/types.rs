@@ -38,6 +38,7 @@ impl fmt::Display for Translation {
 pub struct ShowInfo {
     pub id: String,
     pub title: String,
+    pub mal_id: Option<String>,
     pub available_eps: EpisodeCounts,
 }
 

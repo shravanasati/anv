@@ -1,12 +1,15 @@
 use std::path::Path;
 use anyhow::{Context, Result, bail};
 
+use crate::Cli;
 use crate::config::AppConfig;
 use crate::history::{History, theme};
 use crate::providers::{AnimeProvider, allanime::AllAnimeClient};
 use crate::sync::mal::{MalClient, MalToken, MalWatchlistEntry};
 use crate::types::{EpisodeCounts, Provider, ShowInfo, Translation};
 use crate::cmd::anime::play_show;
+
+use crate::aniskip::SkipOptions;
 
 pub async fn run_mal_list(
     list_type: &str,
@@ -17,8 +20,9 @@ pub async fn run_mal_list(
     auto_play_next: bool,
     history: &mut History,
     history_path: &Path,
-    player: String,
     mal_client: &MalClient,
+    config: &AppConfig,
+    cli: &Cli,
 ) -> Result<()> {
     println!("Fetching your MAL '{}' list...", list_name);
     let watchlist = match list_type {
@@ -33,6 +37,14 @@ pub async fn run_mal_list(
 
     let allanime = AllAnimeClient::new()?;
     let theme = theme();
+
+    let skip_opts = SkipOptions {
+        skip_op: cli.skip_op,
+        skip_ed: cli.skip_ed,
+        skip_mixed_op: cli.skip_mixed_op,
+        skip_mixed_ed: cli.skip_mixed_ed,
+        skip_recap: cli.skip_recap,
+    };
 
     loop {
         let items: Vec<String> = watchlist
@@ -76,61 +88,62 @@ pub async fn run_mal_list(
         let entry: &MalWatchlistEntry = &watchlist[idx];
         let cached_allanime_id = mal_client.cached_allanime_id(entry.mal_id);
 
-        let allanime_id = if let Some(id) = cached_allanime_id {
-            id
+        let (allanime_id, mal_id) = if let Some(id) = cached_allanime_id {
+            (id, Some(entry.mal_id.to_string()))
         } else {
             println!("Searching AllAnime for \"{}\"...", entry.title);
             let results = allanime.search_shows(&entry.title, translation).await?;
 
-            match results.len() {
-                0 => {
-                    println!("No AllAnime results for \"{}\". Try a different search query (or Esc to go back).", entry.title);
-                    let query: String = dialoguer::Input::with_theme(&theme)
-                        .with_prompt("Search query")
-                        .allow_empty(true)
-                        .interact_text()?;
-                    if query.trim().is_empty() {
-                        continue;
+            if let Some(matched) = results.iter().find(|s| s.mal_id.as_deref() == Some(&entry.mal_id.to_string())) {
+                mal_client.cache_allanime_id(&matched.id, entry.mal_id);
+                (matched.id.clone(), matched.mal_id.clone())
+            } else {
+                match results.len() {
+                    0 => {
+                        println!("No AllAnime results for \"{}\". Try a different search query (or Esc to go back).", entry.title);
+                        let query: String = dialoguer::Input::with_theme(&theme)
+                            .with_prompt("Search query")
+                            .allow_empty(true)
+                            .interact_text()?;
+                        if query.trim().is_empty() {
+                            continue;
+                        }
+                        let retry = allanime.search_shows(query.trim(), translation).await?;
+                        if retry.is_empty() {
+                            println!("Still no results. Going back to watchlist.");
+                            continue;
+                        }
+                        let opts: Vec<String> = retry
+                            .iter()
+                            .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
+                            .collect();
+                        let pick = dialoguer::Select::with_theme(&theme)
+                            .with_prompt(format!("Which AllAnime entry matches \"{}\"? (Esc = back)", entry.title))
+                            .items(&opts)
+                            .default(0)
+                            .interact_opt()?;
+                        let Some(i) = pick else { continue };
+                        let chosen = &retry[i];
+                        mal_client.cache_allanime_id(&chosen.id, entry.mal_id);
+                        (chosen.id.clone(), chosen.mal_id.clone())
                     }
-                    let retry = allanime.search_shows(query.trim(), translation).await?;
-                    if retry.is_empty() {
-                        println!("Still no results. Going back to watchlist.");
-                        continue;
+                    _ => {
+                        let opts: Vec<String> = results
+                            .iter()
+                            .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
+                            .collect();
+                        let pick = dialoguer::Select::with_theme(&theme)
+                            .with_prompt(format!("Which AllAnime entry matches \"{}\"? (Esc = back)", entry.title))
+                            .items(&opts)
+                            .default(0)
+                            .interact_opt()?;
+                        let Some(i) = pick else {
+                            continue;
+                        };
+                        let chosen = &results[i];
+                        mal_client.cache_allanime_id(&chosen.id, entry.mal_id);
+                        (chosen.id.clone(), chosen.mal_id.clone())
                     }
-                    let opts: Vec<String> = retry
-                        .iter()
-                        .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
-                        .collect();
-                    let pick = dialoguer::Select::with_theme(&theme)
-                        .with_prompt(format!("Which AllAnime entry matches \"{}\"? (Esc = back)", entry.title))
-                        .items(&opts)
-                        .default(0)
-                        .interact_opt()?;
-                    let Some(i) = pick else { continue };
-                    let chosen = &retry[i];
-                    mal_client.cache_allanime_id(&chosen.id, entry.mal_id);
-                    chosen.id.clone()
-                }
-                1 => {
-                    mal_client.cache_allanime_id(&results[0].id, entry.mal_id);
-                    results[0].id.clone()
-                }
-                _ => {
-                    let opts: Vec<String> = results
-                        .iter()
-                        .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
-                        .collect();
-                    let pick = dialoguer::Select::with_theme(&theme)
-                        .with_prompt(format!("Which AllAnime entry matches \"{}\"? (Esc = back)", entry.title))
-                        .items(&opts)
-                        .default(0)
-                        .interact_opt()?;
-                    let Some(i) = pick else {
-                        continue;
-                    };
-                    let chosen = &results[i];
-                    mal_client.cache_allanime_id(&chosen.id, entry.mal_id);
-                    chosen.id.clone()
                 }
             }
         };
@@ -138,6 +151,7 @@ pub async fn run_mal_list(
         let show = ShowInfo {
             id: allanime_id,
             title: entry.title.clone(),
+            mal_id,
             available_eps: EpisodeCounts::default(),
         };
 
@@ -151,9 +165,10 @@ pub async fn run_mal_list(
             episode.clone(),
             entry.num_episodes_watched.map(|n| n.to_string()),
             auto_play_next,
-            &player,
             Some(mal_client),
             binge,
+            config,
+            skip_opts,
         )
         .await;
     }

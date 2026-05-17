@@ -5,6 +5,7 @@ use dialoguer::{Select, FuzzySelect};
 
 use crate::Cli;
 use crate::cache::{MangaCacheState, cache_manga_pages};
+use crate::config::AppConfig;
 use crate::history::{History, HistoryEntry, theme};
 use crate::player::launch_image_viewer;
 use crate::providers::MangaProvider;
@@ -20,6 +21,7 @@ pub async fn run_manga_flow(
     history_path: &Path,
     client: &impl MangaProvider,
     auto_play_next: bool,
+    config: &AppConfig,
 ) -> Result<()> {
     if cli.query.is_empty() {
         println!("No query provided. Use `anv --manga <name>`.");
@@ -64,6 +66,7 @@ pub async fn run_manga_flow(
         auto_play_next,
         cli.cache_dir.as_deref(),
         cli.provider,
+        config,
     )
     .await
 }
@@ -78,6 +81,7 @@ pub async fn read_manga(
     auto_play_next: bool,
     cache_base_override: Option<&Path>,
     provider: Provider,
+    config: &AppConfig,
 ) -> Result<()> {
     let chapters = match client.fetch_chapters(&manga.id, translation).await {
         Ok(c) => c,
@@ -251,6 +255,7 @@ pub async fn read_manga(
             &cache_state.cache_files,
             &manga.title,
             &chosen_label,
+            config,
         )
         .await?;
 

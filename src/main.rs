@@ -7,6 +7,7 @@ use config::AppConfig;
 mod cache;
 mod cmd;
 mod config;
+mod aniskip;
 mod history;
 mod player;
 mod providers;
@@ -65,6 +66,26 @@ pub struct Cli {
     /// Start playback/reading from a specific episode or chapter number.
     #[arg(short = 'e', long, value_name = "EPISODE")]
     pub episode: Option<String>,
+
+    /// Skip opening sequences (override config).
+    #[arg(long, action = clap::ArgAction::Set)]
+    pub skip_op: Option<bool>,
+
+    /// Skip ending sequences (override config).
+    #[arg(long, action = clap::ArgAction::Set)]
+    pub skip_ed: Option<bool>,
+
+    /// Skip mixed opening sequences (override config).
+    #[arg(long, action = clap::ArgAction::Set)]
+    pub skip_mixed_op: Option<bool>,
+
+    /// Skip mixed ending sequences (override config).
+    #[arg(long, action = clap::ArgAction::Set)]
+    pub skip_mixed_ed: Option<bool>,
+
+    /// Skip recap sequences (override config).
+    #[arg(long, action = clap::ArgAction::Set)]
+    pub skip_recap: Option<bool>,
 
     /// Title to search for (e.g. `anv "attack on titan"`).
     #[arg(value_name = "QUERY")]
@@ -178,11 +199,11 @@ async fn run() -> Result<()> {
             let auto_play_next = *history_next || cfg.auto_play_next;
             return cmd::anime::run_anime_flow(
                 &cli,
+                &cfg,
                 Translation::Sub,
                 true,
                 &mut history,
                 &history_path,
-                cfg.player.clone(),
                 mal_client.as_ref(),
                 binge,
                 auto_play_next,
@@ -216,8 +237,9 @@ async fn run() -> Result<()> {
                         auto_play_next,
                         &mut history,
                         &history_path,
-                        cfg.player.clone(),
                         client,
+                        &cfg,
+                        &cli,
                     )
                     .await
                 }
@@ -250,8 +272,9 @@ async fn run() -> Result<()> {
                         auto_play_next,
                         &mut history,
                         &history_path,
-                        cfg.player.clone(),
                         client,
+                        &cfg,
+                        &cli,
                     )
                     .await
                 }
@@ -287,17 +310,17 @@ async fn run() -> Result<()> {
         match cli.provider {
             Provider::Allanime => {
                 let client = AllAnimeClient::new()?;
-                return cmd::manga::run_manga_flow(&cli, translation, &mut history, &history_path, &client, cfg.auto_play_next)
+                return cmd::manga::run_manga_flow(&cli, translation, &mut history, &history_path, &client, cfg.auto_play_next, &cfg)
                     .await;
             }
             Provider::Mangadex => {
                 let client = MangaDexClient::new()?;
-                return cmd::manga::run_manga_flow(&cli, translation, &mut history, &history_path, &client, cfg.auto_play_next)
+                return cmd::manga::run_manga_flow(&cli, translation, &mut history, &history_path, &client, cfg.auto_play_next, &cfg)
                     .await;
             }
             Provider::Mangapill => {
                 let client = MangapillClient::new()?;
-                return cmd::manga::run_manga_flow(&cli, translation, &mut history, &history_path, &client, cfg.auto_play_next)
+                return cmd::manga::run_manga_flow(&cli, translation, &mut history, &history_path, &client, cfg.auto_play_next, &cfg)
                     .await;
             }
         }
@@ -316,11 +339,11 @@ async fn run() -> Result<()> {
     let auto_play_next = cfg.auto_play_next;
     cmd::anime::run_anime_flow(
         &cli,
+        &cfg,
         translation,
         false,
         &mut history,
         &history_path,
-        cfg.player.clone(),
         mal_client.as_ref(),
         binge,
         auto_play_next,

@@ -3,17 +3,19 @@ use dialoguer::Select;
 use std::path::PathBuf;
 use tokio::process::Command;
 
+use crate::aniskip::{SkipOptions, prepare_aniskip_args};
+use crate::config::AppConfig;
 use crate::history::theme;
 use crate::proxy::{CachedPageTarget, LocalPageProxy};
 use crate::types::{Page, StreamOption};
 
 pub const PLAYER_ENV_KEY: &str = "ANV_PLAYER";
 
-pub fn detect_player() -> String {
+pub fn detect_player(config: &AppConfig) -> String {
     std::env::var(PLAYER_ENV_KEY)
         .ok()
         .filter(|val| !val.trim().is_empty())
-        .unwrap_or_else(|| "mpv".to_string())
+        .unwrap_or_else(|| config.player.clone())
 }
 
 fn build_command(player: &str) -> Result<Command> {
@@ -48,13 +50,28 @@ pub async fn launch_player(
     stream: &StreamOption,
     title: &str,
     episode: &str,
-    player: &str,
+    mal_id: Option<&str>,
+    config: &AppConfig,
+    skip_opts: SkipOptions,
 ) -> Result<()> {
-    let mut cmd = build_command(player)?;
+    let player = detect_player(config);
+    let mut cmd = build_command(&player)?;
     let media_title = format!("{title} - Episode {episode}");
     cmd.arg("--quiet");
     cmd.arg("--terminal=no");
     cmd.arg(format!("--force-media-title={media_title}"));
+
+    if let Some(mid) = mal_id {
+        match prepare_aniskip_args(mid, episode, config, skip_opts).await {
+            Ok(args) => {
+                cmd.args(args);
+            }
+            Err(err) => {
+                eprintln!("[aniskip] error: {err}");
+            }
+        }
+    }
+
     if let Some(sub) = &stream.subtitle {
         cmd.arg(format!("--sub-file={sub}"));
     }
@@ -74,7 +91,7 @@ pub async fn launch_player(
         Ok(status) => status,
         Err(err) => {
             if err.kind() == std::io::ErrorKind::NotFound {
-                let bin = shlex::split(player)
+                let bin = shlex::split(&player)
                     .and_then(|v| v.into_iter().next())
                     .unwrap_or_else(|| player.to_string());
                 return Err(anyhow!(
@@ -99,8 +116,9 @@ pub async fn launch_image_viewer(
     cache_files: &[PathBuf],
     title: &str,
     chapter: &str,
+    config: &AppConfig,
 ) -> Result<()> {
-    let player = detect_player();
+    let player = detect_player(config);
     let mut cmd = build_command(&player)?;
     let media_title = format!("{title} - Chapter {chapter}");
     cmd.arg("--quiet");

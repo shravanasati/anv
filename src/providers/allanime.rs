@@ -410,6 +410,7 @@ impl AnimeProvider for AllAnimeClient {
             .map(|edge| ShowInfo {
                 id: edge.id,
                 title: edge.name,
+                mal_id: edge.mal_id,
                 available_eps: EpisodeCounts {
                     sub: edge.available_episodes.sub,
                     dub: edge.available_episodes.dub,
@@ -489,6 +490,11 @@ impl AnimeProvider for AllAnimeClient {
         }
 
         Ok(Vec::new())
+    }
+
+    async fn fetch_mal_id(&self, show_id: &str) -> Result<Option<String>> {
+        let detail = self.fetch_show_detail(show_id).await?;
+        Ok(detail.mal_id)
     }
 }
 
@@ -762,6 +768,8 @@ struct SearchEdge {
     #[serde(rename = "_id")]
     id: String,
     name: String,
+    #[serde(rename = "malId")]
+    mal_id: Option<String>,
     #[serde(rename = "availableEpisodes")]
     #[serde(default)]
     available_episodes: AvailabilitySnapshot,
@@ -854,6 +862,8 @@ struct ShowDetailPayload {
 
 #[derive(Debug, Deserialize)]
 struct ShowDetail {
+    #[serde(rename = "malId")]
+    mal_id: Option<String>,
     #[serde(rename = "availableEpisodesDetail")]
     #[serde(default)]
     available_episodes_detail: EpisodeDetail,
@@ -919,6 +929,7 @@ const SEARCH_SHOWS_QUERY: &str = r#"query($search: SearchInput, $limit: Int, $pa
     edges {
       _id
       name
+      malId
       availableEpisodes
     }
   }
@@ -928,6 +939,7 @@ const SHOW_DETAIL_QUERY: &str = r#"query($showId: String!) {
   show(_id: $showId) {
     _id
     name
+    malId
     availableEpisodesDetail
   }
 }"#;

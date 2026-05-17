@@ -5,6 +5,8 @@ use dialoguer::Select;
 use reqwest::StatusCode;
 
 use crate::Cli;
+use crate::aniskip::SkipOptions;
+use crate::config::AppConfig;
 use crate::history::{History, HistoryEntry, theme};
 use crate::player::{choose_stream, launch_player};
 use crate::providers::{AnimeProvider, allanime::AllAnimeClient, mangadex::MangaDexClient, mangapill::MangapillClient};
@@ -15,16 +17,24 @@ use crate::cmd::manga::read_manga;
 
 pub async fn run_anime_flow<P: SyncProvider>(
     cli: &Cli,
+    config: &AppConfig,
     translation: Translation,
     history_mode: bool,
     history: &mut History,
     history_path: &Path,
-    player: String,
     sync_provider: Option<&P>,
     binge: bool,
     auto_play_next: bool,
 ) -> Result<()> {
     let client = AllAnimeClient::new()?;
+
+    let skip_opts = SkipOptions {
+        skip_op: cli.skip_op,
+        skip_ed: cli.skip_ed,
+        skip_mixed_op: cli.skip_mixed_op,
+        skip_mixed_ed: cli.skip_mixed_ed,
+        skip_recap: cli.skip_recap,
+    };
 
     if history_mode {
         if let Some(entry) = history.select_entry()? {
@@ -46,6 +56,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             auto_play_next,
                             cli.cache_dir.as_deref(),
                             entry.provider,
+                            config,
                         )
                         .await?
                     }
@@ -60,6 +71,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             auto_play_next,
                             cli.cache_dir.as_deref(),
                             entry.provider,
+                            config,
                         )
                         .await?
                     }
@@ -74,6 +86,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             auto_play_next,
                             cli.cache_dir.as_deref(),
                             entry.provider,
+                            config,
                         )
                         .await?
                     }
@@ -88,14 +101,16 @@ pub async fn run_anime_flow<P: SyncProvider>(
                     ShowInfo {
                         id: entry.show_id.clone(),
                         title: entry.show_title.clone(),
+                        mal_id: None,
                         available_eps: EpisodeCounts::default(),
                     },
                     if auto_play_next { None } else { Some(entry.episode.clone()) },
                     if auto_play_next { Some(entry.episode.clone()) } else { None },
                     auto_play_next,
-                    &player,
                     sync_provider,
                     binge,
+                    config,
+                    skip_opts,
                 )
                 .await?;
             }
@@ -146,9 +161,10 @@ pub async fn run_anime_flow<P: SyncProvider>(
         cli.episode.clone(),
         None,
         auto_play_next,
-        &player,
         sync_provider,
         binge,
+        config,
+        skip_opts,
     )
     .await
 }
@@ -159,13 +175,14 @@ pub async fn play_show<P: SyncProvider>(
     history_path: &Path,
     translation: Translation,
     provider: Provider,
-    show: ShowInfo,
+    mut show: ShowInfo,
     prefer_episode: Option<String>,
     override_last_watched: Option<String>,
     auto_play_next: bool,
-    player: &str,
     sync_provider: Option<&P>,
     binge: bool,
+    config: &AppConfig,
+    skip_opts: SkipOptions,
 ) -> Result<()> {
     let episodes = client.fetch_episodes(&show.id, translation).await?;
     if episodes.is_empty() {
@@ -174,6 +191,12 @@ pub async fn play_show<P: SyncProvider>(
             translation.label(),
             show.title
         );
+    }
+
+    if show.mal_id.is_none() {
+        if let Ok(Some(mid)) = client.fetch_mal_id(&show.id).await {
+            show.mal_id = Some(mid);
+        }
     }
 
     let sorted_episodes = sorted_episode_labels(&episodes);
@@ -282,7 +305,15 @@ pub async fn play_show<P: SyncProvider>(
 
         let next_candidate = next_episode_label_presorted(&chosen, &sorted_episodes);
 
-        launch_player(&stream, &show.title, &chosen, player).await?;
+        launch_player(
+            &stream,
+            &show.title,
+            &chosen,
+            show.mal_id.as_deref(),
+            config,
+            skip_opts.clone(),
+        )
+        .await?;
 
         history.upsert(HistoryEntry {
             show_id: show.id.clone(),

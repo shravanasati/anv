@@ -24,10 +24,10 @@ powershell -ExecutionPolicy Bypass -c "(irm https://github.com/shravanasati/anv/
 Pre-built binaries for all platforms are available on [GitHub Releases](https://github.com/shravanasati/anv/releases).
 
 
-### Cargo
+<!-- ### Cargo
 ```bash
 cargo install anv
-```
+``` -->
 
 ### Updating
 
@@ -50,6 +50,16 @@ anv "bocchi the rock"
 Prefer the dub:
 ```bash
 anv --dub "demon slayer"
+```
+
+Automatic skip opening and ending (enabled by default):
+```bash
+anv "solo leveling" # uses AniSkip API
+```
+
+Disable skipping or skip recaps on the fly:
+```bash
+anv --skip-op=false --skip-recap=true "bocchi the rock"
 ```
 
 Read manga chapters:
@@ -132,6 +142,15 @@ client_id = "<your-client-id>"
 
 [sync]
 enabled = false
+
+[aniskip]
+# skip_op       — skip opening (default: true)
+# skip_ed       — skip ending (default: true)
+# skip_mixed_op — skip mixed opening (default: false)
+# skip_mixed_ed — skip mixed ending (default: false)
+# skip_recap    — skip recap (default: false)
+skip_op = true
+skip_ed = true
 ```
 
 ## MAL sync
@@ -189,7 +208,23 @@ anv watchlist -e 5     # start at episode 5
 
 Anime that hasn't premiered yet (`not_yet_aired`) is automatically hidden so the list stays actionable. Each entry shows an episode count and relevant status tags.
 
-<!-- ### How sync works
+## Automatic Skipping (AniSkip)
+
+anv integrates with the [AniSkip](https://aniskip.com/) database to automatically skip openings, endings, and recaps during playback.
+
+### CLI Flags
+
+| Flag | Description |
+|---|---|
+| `--skip-op=<bool>` | Skip opening sequences (default: true) |
+| `--skip-ed=<bool>` | Skip ending sequences (default: true) |
+| `--skip-mixed-op=<bool>` | Skip mixed opening sequences |
+| `--skip-mixed-ed=<bool>` | Skip mixed ending sequences |
+| `--skip-recap=<bool>` | Skip recap sequences |
+
+To see if AniSkip is working or troubleshoot missing skip times, run anv with `ANV_DEBUG=1`.
+
+## Tips and tweaks
 
 After each episode finishes playing:
 
