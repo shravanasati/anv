@@ -3,6 +3,7 @@ use config::{Config, Environment, File, FileFormat};
 use dirs_next::config_dir;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
+use toml::Value;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AppConfig {
@@ -133,6 +134,8 @@ impl AppConfig {
 
         if !path.exists() {
             Self::write_defaults(&path)?;
+        } else {
+            Self::backfill_missing_fields(&path)?;
         }
 
         let cfg = Config::builder()
@@ -151,6 +154,40 @@ impl AppConfig {
 
         cfg.try_deserialize::<AppConfig>()
             .context("failed to deserialize config")
+    }
+
+    /// Reads the on-disk config and inserts any keys that are present in the
+    /// compiled-in defaults but absent in the file.  Existing values are never
+    /// touched.  If the file was changed, a notice is printed so the user knows
+    /// new options have been added to their config.
+    fn backfill_missing_fields(path: &PathBuf) -> Result<()> {
+        let raw = fs::read_to_string(path)
+            .with_context(|| format!("failed to read config file {}", path.display()))?;
+
+        let mut on_disk: toml::Table = raw
+            .parse::<toml::Table>()
+            .with_context(|| format!("failed to parse config file {}", path.display()))?;
+
+        let default_value =
+            toml::Value::try_from(AppConfig::default()).context("failed to serialize defaults")?;
+        let default_table = default_value
+            .as_table()
+            .expect("AppConfig must serialize as a TOML table");
+
+        let changed = merge_missing(&mut on_disk, default_table);
+
+        if changed {
+            let new_content = toml::to_string_pretty(&on_disk)
+                .context("failed to serialize updated config")?;
+            fs::write(path, format!("{CONFIG_HEADER}{new_content}"))
+                .with_context(|| format!("failed to write updated config to {}", path.display()))?;
+            println!(
+                "Note: new config options were added to your config at {} with their default values.",
+                path.display()
+            );
+        }
+
+        Ok(())
     }
 
     fn write_defaults(path: &PathBuf) -> Result<()> {
@@ -178,4 +215,27 @@ impl AppConfig {
             .with_context(|| format!("failed to write config to {}", path.display()))?;
         Ok(())
     }
+}
+
+/// Recursively inserts keys from `defaults` that are missing in `target`.
+/// Returns `true` if any key was inserted.
+fn merge_missing(target: &mut toml::Table, defaults: &toml::Table) -> bool {
+    let mut changed = false;
+    for (key, default_val) in defaults {
+        match target.get_mut(key) {
+            None => {
+                target.insert(key.clone(), default_val.clone());
+                changed = true;
+            }
+            Some(Value::Table(existing_table)) => {
+                if let Value::Table(default_subtable) = default_val {
+                    if merge_missing(existing_table, default_subtable) {
+                        changed = true;
+                    }
+                }
+            }
+            Some(_) => {} // key already present, leave it alone
+        }
+    }
+    changed
 }
