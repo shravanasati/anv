@@ -27,20 +27,33 @@ local opts = {
 
 options.read_options(opts, "anv_skip")
 
+local skipped = {
+    op = false,
+    ed = false,
+    mixed_op = false,
+    mixed_ed = false,
+    recap = false,
+}
+
 local function check_skip()
     local time = mp.get_property_number("time-pos")
     if not time then return end
 
-    if opts.skip_op_end > 0 and time >= opts.skip_op_start and time < opts.skip_op_end then
+    if not skipped.op and opts.skip_op_end > 0 and time >= opts.skip_op_start and time < opts.skip_op_end then
         mp.set_property_number("time-pos", opts.skip_op_end)
-    elseif opts.skip_ed_end > 0 and time >= opts.skip_ed_start and time < opts.skip_ed_end then
+        skipped.op = true
+    elseif not skipped.ed and opts.skip_ed_end > 0 and time >= opts.skip_ed_start and time < opts.skip_ed_end then
         mp.set_property_number("time-pos", opts.skip_ed_end)
-    elseif opts.skip_mixed_op_end > 0 and time >= opts.skip_mixed_op_start and time < opts.skip_mixed_op_end then
+        skipped.ed = true
+    elseif not skipped.mixed_op and opts.skip_mixed_op_end > 0 and time >= opts.skip_mixed_op_start and time < opts.skip_mixed_op_end then
         mp.set_property_number("time-pos", opts.skip_mixed_op_end)
-    elseif opts.skip_mixed_ed_end > 0 and time >= opts.skip_mixed_ed_start and time < opts.skip_mixed_ed_end then
+        skipped.mixed_op = true
+    elseif not skipped.mixed_ed and opts.skip_mixed_ed_end > 0 and time >= opts.skip_mixed_ed_start and time < opts.skip_mixed_ed_end then
         mp.set_property_number("time-pos", opts.skip_mixed_ed_end)
-    elseif opts.skip_recap_end > 0 and time >= opts.skip_recap_start and time < opts.skip_recap_end then
+        skipped.mixed_ed = true
+    elseif not skipped.recap and opts.skip_recap_end > 0 and time >= opts.skip_recap_start and time < opts.skip_recap_end then
         mp.set_property_number("time-pos", opts.skip_recap_end)
+        skipped.recap = true
     end
 end
 
@@ -54,6 +67,16 @@ pub struct SkipTimes {
     pub mixed_op: Option<(f64, f64)>,
     pub mixed_ed: Option<(f64, f64)>,
     pub recap: Option<(f64, f64)>,
+}
+
+impl SkipTimes {
+    pub fn is_empty(&self) -> bool {
+        self.op.is_none()
+            && self.ed.is_none()
+            && self.mixed_op.is_none()
+            && self.mixed_ed.is_none()
+            && self.recap.is_none()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -158,8 +181,10 @@ pub async fn fetch_skip_times(mal_id: &str, episode: &str) -> Result<SkipTimes> 
         );
     }
 
-    cache.entries.insert(cache_key, skip_times.clone());
-    let _ = cache.save();
+    if !skip_times.is_empty() {
+        cache.entries.insert(cache_key, skip_times.clone());
+        let _ = cache.save();
+    }
     Ok(skip_times)
 }
 
