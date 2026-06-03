@@ -168,6 +168,8 @@ struct AnimelistDetail {
     num_episodes: u32,
     #[serde(default)]
     status: String,
+    #[serde(default)]
+    alternative_titles: AlternativeTitles,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -212,12 +214,15 @@ pub struct MalClient {
     /// Show IDs the user has declined to sync during this session.
     /// Any show_id in here is silently skipped for the rest of the process.
     skipped_ids: std::sync::Mutex<std::collections::HashSet<String>>,
+    /// Whether to prefer English alternative titles over the default Japanese
+    /// title when displaying MAL watchlist/watching entries.
+    prefer_english_titles: bool,
 }
 
 impl MalClient {
     /// Build a `MalClient` from an existing (possibly expired) token.
     /// Call `MalClient::authenticate` first if no token exists.
-    pub async fn from_token(client_id: String, token: MalToken) -> Result<Self> {
+    pub async fn from_token(client_id: String, token: MalToken, prefer_english_titles: bool) -> Result<Self> {
         let http = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -234,6 +239,7 @@ impl MalClient {
             token,
             id_cache: std::sync::Mutex::new(id_cache),
             skipped_ids: std::sync::Mutex::new(std::collections::HashSet::new()),
+            prefer_english_titles,
         };
 
         if client.token.is_expired() {
@@ -655,7 +661,7 @@ impl MalClient {
     async fn fetch_list(&self, status: &str) -> Result<Vec<MalWatchlistEntry>> {
         let mut entries: Vec<MalWatchlistEntry> = Vec::new();
         let mut next_url: Option<String> = Some(format!(
-            "{MAL_API_BASE}/users/@me/animelist?status={}&limit=100&fields=num_episodes,status,list_status",
+            "{MAL_API_BASE}/users/@me/animelist?status={}&limit=100&fields=num_episodes,status,list_status,alternative_titles",
             status
         ));
 
@@ -678,9 +684,24 @@ impl MalClient {
                 if node.node.status == "not_yet_aired" {
                     continue;
                 }
+                let title = if self.prefer_english_titles {
+                    let en = &node.node.alternative_titles.en;
+                    if en.is_empty() {
+                        node.node.title
+                    } else {
+                        en.clone()
+                    }
+                } else {
+                    let ja = &node.node.alternative_titles.ja;
+                    if ja.is_empty() {
+                        node.node.title
+                    } else {
+                        ja.clone()
+                    }
+                };
                 entries.push(MalWatchlistEntry {
                     mal_id: node.node.id,
-                    title: node.node.title,
+                    title,
                     num_episodes: node.node.num_episodes,
                     airing_status: node.node.status,
                     num_episodes_watched: node.list_status.map(|s| s.num_episodes_watched),
@@ -892,7 +913,7 @@ pub async fn build_mal_client_if_enabled(cfg: &AppConfig) -> Option<MalClient> {
         return None;
     }
     match MalToken::load() {
-        Ok(Some(token)) => match MalClient::from_token(cfg.mal.client_id.clone(), token).await {
+        Ok(Some(token)) => match MalClient::from_token(cfg.mal.client_id.clone(), token, cfg.prefer_english_titles).await {
             Ok(client) => Some(client),
             Err(err) => {
                 eprintln!("[sync] Failed to initialize MAL client: {err}");

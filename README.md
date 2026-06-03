@@ -39,6 +39,11 @@ anv-update
 
 > **Note:** If something breaks or streams stop working, run `anv-update` first before raising an issue — most provider-related breakages are fixed in patch releases.
 
+### Dependencies
+
+anv depends on **mpv** to play media. It is a necessary requirement. Ensure `mpv` is installed and available in your `PATH`.
+
+MPV installation docs: https://mpv.io/installation/
 
 ## Quick start quests
 

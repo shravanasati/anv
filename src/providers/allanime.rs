@@ -37,15 +37,16 @@ const PREFERRED_PROVIDERS: &[&str] = &[
 
 pub struct AllAnimeClient {
     client: Client,
+    prefer_english_titles: bool,
 }
 
 impl AllAnimeClient {
-    pub fn new() -> Result<Self> {
+    pub fn new(prefer_english_titles: bool) -> Result<Self> {
         let client = Client::builder()
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(30))
             .build()?;
-        Ok(Self { client })
+        Ok(Self { client, prefer_english_titles })
     }
 
     /// Execute a GraphQL request (either GET or POST) and deserialize the `data` field.
@@ -404,7 +405,7 @@ impl AllAnimeClient {
 
 impl Default for AllAnimeClient {
     fn default() -> Self {
-        Self::new().expect("failed to build HTTP client")
+        Self::new(false).expect("failed to build HTTP client")
     }
 }
 
@@ -431,7 +432,13 @@ impl AnimeProvider for AllAnimeClient {
             .into_iter()
             .map(|edge| ShowInfo {
                 id: edge.id,
-                title: edge.name,
+                title: if self.prefer_english_titles {
+                    edge.english_name
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or(edge.name)
+                } else {
+                    edge.name
+                },
                 mal_id: edge.mal_id,
                 available_eps: EpisodeCounts {
                     sub: edge.available_episodes.sub,
@@ -794,6 +801,8 @@ struct SearchEdge {
     #[serde(rename = "_id")]
     id: String,
     name: String,
+    #[serde(rename = "englishName")]
+    english_name: Option<String>,
     #[serde(rename = "malId")]
     mal_id: Option<String>,
     #[serde(rename = "availableEpisodes")]
@@ -955,6 +964,7 @@ const SEARCH_SHOWS_QUERY: &str = r#"query($search: SearchInput, $limit: Int, $pa
     edges {
       _id
       name
+      englishName
       malId
       availableEpisodes
     }

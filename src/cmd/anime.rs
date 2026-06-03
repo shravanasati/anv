@@ -28,7 +28,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
     binge: bool,
     auto_play_next: bool,
 ) -> Result<()> {
-    let client = AllAnimeClient::new()?;
+    let client = AllAnimeClient::new(config.prefer_english_titles)?;
 
     let skip_opts = SkipOptions {
         skip_op: cli.skip_op,
@@ -49,7 +49,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
                 match entry.provider {
                     Provider::Allanime => {
                         read_manga(
-                            &AllAnimeClient::new()?,
+                            &AllAnimeClient::new(config.prefer_english_titles)?,
                             entry.translation,
                             manga_info,
                             history,

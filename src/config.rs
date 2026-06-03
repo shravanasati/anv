@@ -16,6 +16,11 @@ pub struct AppConfig {
     #[serde(default)]
     pub auto_play_next: bool,
 
+    /// When true, prefer English titles over the original title when displaying
+    /// anime in search results, watchlists, and watching menus.
+    #[serde(default)]
+    pub prefer_english_titles: bool,
+
     #[serde(default)]
     pub mal: MalConfig,
 
@@ -81,6 +86,10 @@ const CONFIG_HEADER: &str = "# anv configuration
 # auto_play_next — set to true to automatically resume from the next episode
 #                  instead of the last watched episode in history/watchlist
 #
+# prefer_english_titles — set to true to prefer English titles over the original
+#                         title in search results, watchlists, and watching menus
+#                         (default: false)
+#
 # [mal]
 #   client_id — your MAL API client ID
 #               register at https://myanimelist.net/apiconfig
@@ -116,6 +125,7 @@ impl Default for AppConfig {
             player: default_player(),
             binge: false,
             auto_play_next: false,
+            prefer_english_titles: false,
             mal: MalConfig::default(),
             sync: SyncConfig::default(),
             aniskip: AniskipConfig::default(),
