@@ -324,7 +324,7 @@ async fn run() -> Result<()> {
         };
         match cli.provider {
             Provider::Allanime => {
-                let client = AllAnimeClient::new(cfg.prefer_english_titles)?;
+                let client = AllAnimeClient::new(cfg.prefer_english_titles, Some(&cfg.api_proxy))?;
                 return cmd::manga::run_manga_flow(
                     &cli,
                     translation,

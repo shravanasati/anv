@@ -1,0 +1,9 @@
+name = "anv-relay"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# Pin to a US region to avoid geo-blocking.
+# Other options: "weur" (Western Europe), "eeur" (Eastern Europe), etc.
+# See: https://developers.cloudflare.com/workers/configuration/placement/#specify-a-cloud-region
+[placement]
+region = "aws:us-west-2"

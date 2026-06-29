@@ -21,6 +21,13 @@ pub struct AppConfig {
     #[serde(default)]
     pub prefer_english_titles: bool,
 
+    /// Optional URL of a relay/proxy server for AllAnime API calls.
+    /// When set, GraphQL requests are routed through this URL to bypass
+    /// Cloudflare geo-blocking.  Video streams are still fetched directly.
+    /// Example: "https://my-relay.my-worker.workers.dev"
+    #[serde(default)]
+    pub api_proxy: String,
+
     #[serde(default)]
     pub mal: MalConfig,
 
@@ -77,33 +84,40 @@ fn default_false() -> bool {
 const CONFIG_HEADER: &str = "# anv configuration
 # Docs: https://github.com/shravanasati/anv
 #
-# player — media player command (default: \"mpv\")
+# player -- media player command (default: \"mpv\")
 #           also overridable with ANV_PLAYER env var
 #
-# binge          — set to true to auto-play the next episode without prompting
+# binge          -- set to true to auto-play the next episode without prompting
 #                  (can also be enabled per-session with the --binge flag)
 #
-# auto_play_next — set to true to automatically resume from the next episode
+# auto_play_next -- set to true to automatically resume from the next episode
 #                  instead of the last watched episode in history/watchlist
 #
-# prefer_english_titles — set to true to prefer English titles over the original
+# prefer_english_titles -- set to true to prefer English titles over the original
 #                         title in search results, watchlists, and watching menus
 #                         (default: false)
 #
+# api_proxy -- URL of a relay server to proxy AllAnime API calls through.
+#             Use this if you get NEED_CAPTCHA errors due to Cloudflare
+#             geo-blocking in your region. Only API requests are proxied;
+#             video streams are fetched directly for best performance.
+#             Example: \"https://my-relay.my-worker.workers.dev\"
+#             (default: \"\" -- disabled)
+#
 # [mal]
-#   client_id — your MAL API client ID
+#   client_id -- your MAL API client ID
 #               register at https://myanimelist.net/apiconfig
 #               redirect URI must be: http://localhost:11422/callback
 #
 # [sync]
-#   enabled — set to true to sync watch status to MAL after each episode
+#   enabled -- set to true to sync watch status to MAL after each episode
 #
 # [aniskip]
-#   skip_op       — skip opening (default: true)
-#   skip_ed       — skip ending (default: true)
-#   skip_mixed_op — skip mixed opening (default: false)
-#   skip_mixed_ed — skip mixed ending (default: false)
-#   skip_recap    — skip recap (default: false)
+#   skip_op       -- skip opening (default: true)
+#   skip_ed       -- skip ending (default: true)
+#   skip_mixed_op -- skip mixed opening (default: false)
+#   skip_mixed_ed -- skip mixed ending (default: false)
+#   skip_recap    -- skip recap (default: false)
 
 ";
 
@@ -126,6 +140,7 @@ impl Default for AppConfig {
             binge: false,
             auto_play_next: false,
             prefer_english_titles: false,
+            api_proxy: String::new(),
             mal: MalConfig::default(),
             sync: SyncConfig::default(),
             aniskip: AniskipConfig::default(),

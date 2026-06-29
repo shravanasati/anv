@@ -35,7 +35,7 @@ pub async fn run_mal_list(
         return Ok(());
     }
 
-    let allanime = AllAnimeClient::new(config.prefer_english_titles)?;
+    let allanime = AllAnimeClient::new(config.prefer_english_titles, Some(&config.api_proxy))?;
     let theme = theme();
 
     let skip_opts = SkipOptions {

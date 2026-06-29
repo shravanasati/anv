@@ -38,15 +38,33 @@ const PREFERRED_PROVIDERS: &[&str] = &[
 pub struct AllAnimeClient {
     client: Client,
     prefer_english_titles: bool,
+    /// Base URL for GraphQL API calls.  Defaults to `ALLANIME_API_URL` but can
+    /// be overridden with a relay/proxy to bypass Cloudflare geo-blocking.
+    api_url: String,
 }
 
 impl AllAnimeClient {
-    pub fn new(prefer_english_titles: bool) -> Result<Self> {
+    pub fn new(prefer_english_titles: bool, api_proxy: Option<&str>) -> Result<Self> {
         let client = Client::builder()
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(30))
             .build()?;
-        Ok(Self { client, prefer_english_titles })
+
+        let api_url = match api_proxy {
+            Some(url) if !url.is_empty() => {
+                let base = url.trim_end_matches('/');
+                let url = if base.ends_with("/api") {
+                    base.to_string()
+                } else {
+                    format!("{base}/api")
+                };
+                eprintln!("Using API proxy: {url}");
+                url
+            }
+            _ => ALLANIME_API_URL.to_string(),
+        };
+
+        Ok(Self { client, prefer_english_titles, api_url })
     }
 
     /// Execute a GraphQL request (either GET or POST) and deserialize the `data` field.
@@ -69,7 +87,7 @@ impl AllAnimeClient {
             }
 
             self.client
-                .get(ALLANIME_API_URL)
+                .get(&self.api_url)
                 .query(&[
                     ("variables", serde_json::to_string(&variables)?),
                     ("extensions", serde_json::to_string(&extensions)?),
@@ -81,7 +99,7 @@ impl AllAnimeClient {
                 body["query"] = serde_json::json!(q);
             }
             self.client
-                .post(ALLANIME_API_URL)
+                .post(&self.api_url)
                 .header("Referer", ALLANIME_REFERER)
                 .header("Origin", ALLANIME_ORIGIN)
                 .json(&body)
@@ -405,7 +423,7 @@ impl AllAnimeClient {
 
 impl Default for AllAnimeClient {
     fn default() -> Self {
-        Self::new(false).expect("failed to build HTTP client")
+        Self::new(false, None).expect("failed to build HTTP client")
     }
 }
 
