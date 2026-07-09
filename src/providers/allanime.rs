@@ -10,7 +10,7 @@ use reqwest::Client;
 use serde::{Deserialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures::{StreamExt, stream::FuturesUnordered};
 
@@ -26,6 +26,17 @@ const ALLANIME_IMAGE_REFERER: &str = "https://allanime.to";
 const ALLANIME_ORIGIN: &str = "https://allanime.day";
 const EPISODE_SOURCES_HASH: &str =
     "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec";
+
+// AES-256-GCM key used for both aaReq token generation and tobeparsed decryption.
+// This is the XOR-derived key from the AllAnime CDN JS bundle (mask ^ base64(partB)).
+// Source: https://cdn.allanime.day/all/mk/_app/immutable/chunks/DNe1e6Xy.js
+// Update when AllAnime rotates their key (check for AA_CRYPTO_STALE / AA_CRYPTO_MISSING errors).
+const ALLANIME_CRYPTO_KEY: [u8; 32] = [
+    0x22, 0x19, 0x6f, 0xa6, 0xaf, 0xca, 0x95, 0x30,
+    0x9f, 0xda, 0xbe, 0x9a, 0x35, 0x34, 0xb8, 0x7c,
+    0xd2, 0x45, 0x4e, 0x50, 0xef, 0xea, 0xbf, 0xcb,
+    0xdb, 0xdf, 0xd3, 0xde, 0x67, 0x8b, 0x39, 0x82,
+];
 
 // Providers known to yield direct HLS/MP4 URLs via the clock.json mechanism.
 // The remaining providers (Ok, Vg, Fm-Hls, Mp4, Sw, …) are JS-obfuscated iframe
@@ -78,12 +89,23 @@ impl AllAnimeClient {
         let request = if use_get {
             let mut extensions = serde_json::json!({});
             if let Some(h) = hash {
-                extensions = serde_json::json!({
-                    "persistedQuery": {
-                        "version": 1,
-                        "sha256Hash": h
-                    }
-                });
+                if h == EPISODE_SOURCES_HASH {
+                    let aa_req = build_aa_req(h)?;
+                    extensions = serde_json::json!({
+                        "persistedQuery": {
+                            "version": 1,
+                            "sha256Hash": h
+                        },
+                        "aaReq": aa_req
+                    });
+                } else {
+                    extensions = serde_json::json!({
+                        "persistedQuery": {
+                            "version": 1,
+                            "sha256Hash": h
+                        }
+                    });
+                }
             }
 
             self.client
@@ -175,29 +197,15 @@ impl AllAnimeClient {
             "episodeString": episode
         });
 
-        // Try persisted query (GET) first.
-        match self
-            .execute_graphql::<EpisodePayload>(
+        let payload: EpisodePayload = self
+            .execute_graphql(
                 true,
-                variables.clone(),
+                variables,
                 None,
                 Some(EPISODE_SOURCES_HASH),
             )
-            .await
-        {
-            Ok(payload) => Ok(payload.episode.source_urls),
-            Err(err) => {
-                if std::env::var("ANV_DEBUG").is_ok() {
-                    eprintln!("[AllAnime] Persisted query failed, falling back to POST: {err}");
-                }
-                let body = serde_json::json!({
-                    "query": EPISODE_SOURCES_QUERY,
-                    "variables": variables
-                });
-                let payload: EpisodePayload = self.post_graphql(&body).await?;
-                Ok(payload.episode.source_urls)
-            }
-        }
+            .await?;
+        Ok(payload.episode.source_urls)
     }
 
     async fn fetch_provider_json(&self, path: &str) -> Result<serde_json::Value> {
@@ -704,11 +712,10 @@ fn decode_pair(pair: &str) -> Option<char> {
 
 /// Decrypts the `tobeparsed` blob returned by the AllAnime API.
 ///
-/// Layout (as of PR #1667): `base64( prefix[1] || nonce[12] || ciphertext || tag[16] )`
-/// - Key = SHA-256("Xot36i3lK3:v1")
-/// - CTR IV = nonce[0..12] ++ 0x00_00_00_02
+/// Layout: `base64( prefix[1] || nonce[12] || ciphertext || tag[16] )`
+/// - Key = `ALLANIME_CRYPTO_KEY` (XOR-derived from CDN JS bundle)
 fn decrypt_tobeparsed(blob: &str) -> Result<String> {
-    let key = Sha256::digest(b"Xot36i3lK3:v1");
+    let key = &ALLANIME_CRYPTO_KEY;
 
     let raw = B64
         .decode(blob)
@@ -718,21 +725,76 @@ fn decrypt_tobeparsed(blob: &str) -> Result<String> {
         bail!("tobeparsed blob too short ({} bytes)", raw.len());
     }
 
-    let nonce = &raw[1..13];
-    let ciphertext = &raw[13..raw.len() - 16];
+    let nonce_bytes = &raw[1..13];
+    let ciphertext_and_tag = &raw[13..];
 
-    // Build the 128-bit CTR IV: nonce (96 bits) || counter=2 (32 bits, big-endian).
-    let mut iv = [0u8; 16];
-    iv[..12].copy_from_slice(nonce);
-    iv[15] = 0x02;
+    use aes_gcm::{
+        aead::{Aead, KeyInit},
+        Aes256Gcm, Nonce,
+    };
 
-    let mut plaintext = ciphertext.to_vec();
-    let key_arr: &[u8; 32] = key.as_ref();
-    let mut cipher = Ctr32BE::<Aes256>::new(key_arr.into(), &iv.into());
-    cipher.apply_keystream(&mut plaintext);
+    let cipher = Aes256Gcm::new_from_slice(key)
+        .map_err(|e| anyhow!("failed to initialize AES-GCM: {e}"))?;
+    let nonce = Nonce::from_slice(nonce_bytes);
+
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext_and_tag)
+        .map_err(|e| anyhow!("AES-GCM decryption failed: {e}"))?;
 
     String::from_utf8(plaintext)
         .map_err(|e| anyhow!("tobeparsed plaintext is not valid UTF-8: {e}"))
+}
+
+#[derive(serde::Serialize)]
+struct AaReqPayload<'a> {
+    v: i32,
+    ts: u64,
+    epoch: i32,
+    #[serde(rename = "buildId")]
+    build_id: &'a str,
+    qh: &'a str,
+}
+
+fn build_aa_req(qh: &str) -> Result<String> {
+    let key = &ALLANIME_CRYPTO_KEY;
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| anyhow!("SystemTime before UNIX EPOCH: {e}"))?
+        .as_millis();
+    let ts = (now_ms / 300_000) * 300_000;
+    let ts_u64 = ts as u64;
+
+    let payload = serde_json::to_string(&AaReqPayload {
+        v: 1,
+        ts: ts_u64,
+        epoch: 4128,
+        build_id: "9",
+        qh,
+    })?;
+
+    let iv_input = format!("4128:9:{}:{}", qh, ts_u64);
+    let iv_hash = Sha256::digest(iv_input.as_bytes());
+    let iv_bytes = &iv_hash[..12];
+
+    use aes_gcm::{
+        aead::{Aead, KeyInit},
+        Aes256Gcm, Nonce,
+    };
+
+    let cipher = Aes256Gcm::new_from_slice(key)
+        .map_err(|e| anyhow!("failed to initialize AES-GCM: {e}"))?;
+    let nonce = Nonce::from_slice(iv_bytes);
+
+    let encrypted = cipher
+        .encrypt(nonce, payload.as_bytes())
+        .map_err(|e| anyhow!("AES-GCM encryption failed: {e}"))?;
+
+    let mut buffer = Vec::with_capacity(1 + 12 + encrypted.len());
+    buffer.push(1);
+    buffer.extend_from_slice(iv_bytes);
+    buffer.extend_from_slice(&encrypted);
+
+    Ok(B64.encode(buffer))
 }
 
 /// Decrypts the Filemoon payload using AES-256-CTR.
@@ -998,12 +1060,6 @@ const SHOW_DETAIL_QUERY: &str = r#"query($showId: String!) {
   }
 }"#;
 
-const EPISODE_SOURCES_QUERY: &str = r#"query($showId: String!, $translationType: VaildTranslationTypeEnumType!, $episodeString: String!) {
-  episode(showId: $showId, translationType: $translationType, episodeString: $episodeString) {
-    episodeString
-        sourceUrls
-  }
-}"#;
 
 const SEARCH_MANGAS_QUERY: &str = r#"query($search: SearchInput, $limit: Int, $page: Int, $translationType: VaildTranslationTypeMangaEnumType, $countryOrigin: VaildCountryOriginEnumType) {
   mangas(search: $search, limit: $limit, page: $page, translationType: $translationType, countryOrigin: $countryOrigin) {
