@@ -38,6 +38,25 @@ const ALLANIME_CRYPTO_KEY: [u8; 32] = [
     0xdb, 0xdf, 0xd3, 0xde, 0x67, 0x8b, 0x39, 0x82,
 ];
 
+// AllAnime sometimes encrypts the tobeparsed response with this static legacy key
+// (sha256("Xot36i3lK3:v1")) instead of the aaReq key, depending on the rotation.
+// Both are tried in decrypt_tobeparsed — see anipy-cli PR #335.
+const ALLANIME_RESPONSE_STATIC_KEY: [u8; 32] = {
+    // sha256(b"Xot36i3lK3:v1") precomputed at compile time.
+    // Computed with:
+    // python3 -c "import hashlib; d=hashlib.sha256(b'Xot36i3lK3:v1').digest(); print([hex(b) for b in d])"
+    // ['0xa2', '0x54', '0xaa', '0x27', '0xc4', '0x10', '0xf2', '0x97', '0xbd', '0x4',
+    //  '0xba', '0x33', '0xa0', '0xc0', '0xdf', '0x7f', '0xf4', '0xe7', '0x6', '0xbf',
+    //  '0x3a', '0xe2', '0x72', '0x71', '0xc6', '0x70', '0x3f', '0x84', '0xe7', '0x50',
+    //  '0xf5', '0x52']
+    [
+        0xa2, 0x54, 0xaa, 0x27, 0xc4, 0x10, 0xf2, 0x97,
+        0xbd, 0x04, 0xba, 0x33, 0xa0, 0xc0, 0xdf, 0x7f,
+        0xf4, 0xe7, 0x06, 0xbf, 0x3a, 0xe2, 0x72, 0x71,
+        0xc6, 0x70, 0x3f, 0x84, 0xe7, 0x50, 0xf5, 0x52,
+    ]
+};
+
 // Providers known to yield direct HLS/MP4 URLs via the clock.json mechanism.
 // The remaining providers (Ok, Vg, Fm-Hls, Mp4, Sw, …) are JS-obfuscated iframe
 // embeds that require per-provider HTML/JS scraping to extract a playable URL —
@@ -713,10 +732,12 @@ fn decode_pair(pair: &str) -> Option<char> {
 /// Decrypts the `tobeparsed` blob returned by the AllAnime API.
 ///
 /// Layout: `base64( prefix[1] || nonce[12] || ciphertext || tag[16] )`
-/// - Key = `ALLANIME_CRYPTO_KEY` (XOR-derived from CDN JS bundle)
+///
+/// AllAnime encrypts the response with either the aaReq key (`ALLANIME_CRYPTO_KEY`)
+/// or a static legacy key (`ALLANIME_RESPONSE_STATIC_KEY`), depending on the rotation.
+/// Both are tried; the first that authenticates successfully is used.
+/// See: anipy-cli PR #335.
 fn decrypt_tobeparsed(blob: &str) -> Result<String> {
-    let key = &ALLANIME_CRYPTO_KEY;
-
     let raw = B64
         .decode(blob)
         .map_err(|e| anyhow!("tobeparsed base64 decode failed: {e}"))?;
@@ -733,16 +754,20 @@ fn decrypt_tobeparsed(blob: &str) -> Result<String> {
         Aes256Gcm, Nonce,
     };
 
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|e| anyhow!("failed to initialize AES-GCM: {e}"))?;
     let nonce = Nonce::from_slice(nonce_bytes);
 
-    let plaintext = cipher
-        .decrypt(nonce, ciphertext_and_tag)
-        .map_err(|e| anyhow!("AES-GCM decryption failed: {e}"))?;
+    // Try both the aaReq key and the static legacy key. AllAnime rotates between them.
+    let candidate_keys: &[&[u8; 32]] = &[&ALLANIME_CRYPTO_KEY, &ALLANIME_RESPONSE_STATIC_KEY];
+    for key in candidate_keys {
+        let cipher = Aes256Gcm::new_from_slice(*key)
+            .map_err(|e| anyhow!("failed to initialize AES-GCM: {e}"))?;
+        if let Ok(plaintext) = cipher.decrypt(nonce, ciphertext_and_tag) {
+            return String::from_utf8(plaintext)
+                .map_err(|e| anyhow!("tobeparsed plaintext is not valid UTF-8: {e}"));
+        }
+    }
 
-    String::from_utf8(plaintext)
-        .map_err(|e| anyhow!("tobeparsed plaintext is not valid UTF-8: {e}"))
+    bail!("AES-GCM decryption failed: tobeparsed could not be decrypted with any known key")
 }
 
 #[derive(serde::Serialize)]
