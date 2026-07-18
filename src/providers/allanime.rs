@@ -28,14 +28,17 @@ const EPISODE_SOURCES_HASH: &str =
     "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec";
 
 // AES-256-GCM key used for both aaReq token generation and tobeparsed decryption.
-// This is the XOR-derived key from the AllAnime CDN JS bundle (mask ^ base64(partB)).
-// Source: https://cdn.allanime.day/all/mk/_app/immutable/chunks/DNe1e6Xy.js
+// Derived as: XOR(bytes.fromhex(mask), base64.decode(partB)) from the AllAnime CDN JS bundle.
+// Epoch: 4130
+// mask:  5264513ba898cb78c5c646bc1c12f2965a53a99891d91e83a2bf9244c36cca41
+// partB: nSMmjt8SIaRRj6ebdfimy1qXlUBuvMoBlPoUiSFoORg=
 // Update when AllAnime rotates their key (check for AA_CRYPTO_STALE / AA_CRYPTO_MISSING errors).
+// See: anipy-cli PR #340
 const ALLANIME_CRYPTO_KEY: [u8; 32] = [
-    0x22, 0x19, 0x6f, 0xa6, 0xaf, 0xca, 0x95, 0x30,
-    0x9f, 0xda, 0xbe, 0x9a, 0x35, 0x34, 0xb8, 0x7c,
-    0xd2, 0x45, 0x4e, 0x50, 0xef, 0xea, 0xbf, 0xcb,
-    0xdb, 0xdf, 0xd3, 0xde, 0x67, 0x8b, 0x39, 0x82,
+    0xcf, 0x47, 0x77, 0xb5, 0x77, 0x8a, 0xea, 0xdc,
+    0x94, 0x49, 0xe1, 0x27, 0x69, 0xea, 0x54, 0x5d,
+    0x00, 0xc4, 0x3c, 0xd8, 0xff, 0x65, 0xd4, 0x82,
+    0x36, 0x45, 0x86, 0xcd, 0xe2, 0x04, 0xf3, 0x59,
 ];
 
 // AllAnime sometimes encrypts the tobeparsed response with this static legacy key
@@ -98,6 +101,10 @@ impl AllAnimeClient {
     }
 
     /// Execute a GraphQL request (either GET or POST) and deserialize the `data` field.
+    ///
+    /// Automatically retries up to 3 times when the API returns a rate-limit error
+    /// ("Too many requests, please try again in N seconds"), honouring the server-
+    /// specified wait time.
     async fn execute_graphql<T: DeserializeOwned>(
         &self,
         use_get: bool,
@@ -105,85 +112,118 @@ impl AllAnimeClient {
         query: Option<&str>,
         hash: Option<&str>,
     ) -> Result<T> {
-        let request = if use_get {
-            let mut extensions = serde_json::json!({});
-            if let Some(h) = hash {
-                if h == EPISODE_SOURCES_HASH {
-                    let aa_req = build_aa_req(h)?;
-                    extensions = serde_json::json!({
-                        "persistedQuery": {
-                            "version": 1,
-                            "sha256Hash": h
-                        },
-                        "aaReq": aa_req
-                    });
-                } else {
-                    extensions = serde_json::json!({
-                        "persistedQuery": {
-                            "version": 1,
-                            "sha256Hash": h
+        const MAX_RETRIES: u32 = 3;
+
+        for attempt in 0..=MAX_RETRIES {
+            let request = if use_get {
+                let mut extensions = serde_json::json!({});
+                if let Some(h) = hash {
+                    if h == EPISODE_SOURCES_HASH {
+                        let aa_req = build_aa_req(h)?;
+                        extensions = serde_json::json!({
+                            "persistedQuery": {
+                                "version": 1,
+                                "sha256Hash": h
+                            },
+                            "aaReq": aa_req
+                        });
+                    } else {
+                        extensions = serde_json::json!({
+                            "persistedQuery": {
+                                "version": 1,
+                                "sha256Hash": h
+                            }
+                        });
+                    }
+                }
+
+                self.client
+                    .get(&self.api_url)
+                    .query(&[
+                        ("variables", serde_json::to_string(&variables)?),
+                        ("extensions", serde_json::to_string(&extensions)?),
+                    ])
+                    .header("Referer", "https://youtu-chan.com")
+            } else {
+                let mut body = serde_json::json!({ "variables": variables });
+                if let Some(q) = query {
+                    body["query"] = serde_json::json!(q);
+                }
+                self.client
+                    .post(&self.api_url)
+                    .header("Referer", ALLANIME_REFERER)
+                    .header("Origin", ALLANIME_ORIGIN)
+                    .json(&body)
+            };
+
+            let response = request.header("Accept", "application/json").send().await?;
+            let status = response.status();
+            let text = response.text().await?;
+
+            if !status.is_success() {
+                bail!("AllAnime API HTTP {status}: {text}");
+            }
+
+            if std::env::var("ANV_DEBUG").is_ok() {
+                eprintln!(
+                    "[AllAnime] {} HTTP {status} — raw response:\n{text}",
+                    if use_get { "GET" } else { "POST" }
+                );
+            }
+
+            // AllAnime now AES-256-GCM-encrypts responses; detect and unwrap.
+            let json_str: std::borrow::Cow<str> = if text.contains("\"tobeparsed\"") {
+                let enc: EncryptedEnvelope = serde_json::from_str(&text).map_err(|e| {
+                    anyhow!("failed to parse encrypted AllAnime envelope: {e}\nRaw:\n{text}")
+                })?;
+                let plaintext = decrypt_tobeparsed(&enc.data.tobeparsed)?;
+
+                if std::env::var("ANV_DEBUG").is_ok() {
+                    eprintln!("[AllAnime] decrypted tobeparsed plaintext:\n{plaintext}");
+                }
+
+                // The plaintext is the inner data object; wrap it so it matches
+                // GraphQlEnvelope<T> which expects {"data": {...}}.
+                std::borrow::Cow::Owned(format!(r#"{{"data":{plaintext}}}"#))
+            } else {
+                std::borrow::Cow::Borrowed(&text)
+            };
+
+            let envelope: GraphQlEnvelope<T> = serde_json::from_str(&json_str).map_err(|e| {
+                anyhow!("failed to parse AllAnime API response: {e}\nJSON:\n{json_str}")
+            })?;
+
+            // Check for a rate-limit error before extracting data.
+            // The API returns HTTP 200 with a GraphQL error body, so we have to
+            // inspect the envelope rather than the HTTP status.
+            if let Some(ref errors) = envelope.errors {
+                if let Some(first) = errors.first() {
+                    // Parse "Too many requests, please try again in N seconds."
+                    let wait_secs = first
+                        .message
+                        .split_whitespace()
+                        .rev()          // iterate from the end
+                        .nth(1)         // "N" is the second-to-last token before "seconds."
+                        .and_then(|s| s.parse::<u64>().ok());
+
+                    if let Some(secs) = wait_secs {
+                        if attempt < MAX_RETRIES {
+                            eprintln!(
+                                "Rate limited by AllAnime — retrying in {secs}s (attempt {}/{MAX_RETRIES})…",
+                                attempt + 1
+                            );
+                            tokio::time::sleep(Duration::from_secs(secs)).await;
+                            continue;
                         }
-                    });
+                    }
                 }
             }
 
-            self.client
-                .get(&self.api_url)
-                .query(&[
-                    ("variables", serde_json::to_string(&variables)?),
-                    ("extensions", serde_json::to_string(&extensions)?),
-                ])
-                .header("Referer", "https://youtu-chan.com")
-        } else {
-            let mut body = serde_json::json!({ "variables": variables });
-            if let Some(q) = query {
-                body["query"] = serde_json::json!(q);
-            }
-            self.client
-                .post(&self.api_url)
-                .header("Referer", ALLANIME_REFERER)
-                .header("Origin", ALLANIME_ORIGIN)
-                .json(&body)
-        };
-
-        let response = request.header("Accept", "application/json").send().await?;
-        let status = response.status();
-        let text = response.text().await?;
-
-        if !status.is_success() {
-            bail!("AllAnime API HTTP {status}: {text}");
+            return Self::extract_data(envelope);
         }
 
-        if std::env::var("ANV_DEBUG").is_ok() {
-            eprintln!(
-                "[AllAnime] {} HTTP {status} — raw response:\n{text}",
-                if use_get { "GET" } else { "POST" }
-            );
-        }
-
-        // AllAnime now AES-256-CTR-encrypts responses; detect and unwrap.
-        let json_str: std::borrow::Cow<str> = if text.contains("\"tobeparsed\"") {
-            let enc: EncryptedEnvelope = serde_json::from_str(&text).map_err(|e| {
-                anyhow!("failed to parse encrypted AllAnime envelope: {e}\nRaw:\n{text}")
-            })?;
-            let plaintext = decrypt_tobeparsed(&enc.data.tobeparsed)?;
-
-            if std::env::var("ANV_DEBUG").is_ok() {
-                eprintln!("[AllAnime] decrypted tobeparsed plaintext:\n{plaintext}");
-            }
-
-            // The plaintext is the inner data object; wrap it so it matches
-            // GraphQlEnvelope<T> which expects {"data": {...}}.
-            std::borrow::Cow::Owned(format!(r#"{{"data":{plaintext}}}"#))
-        } else {
-            std::borrow::Cow::Borrowed(&text)
-        };
-
-        let envelope: GraphQlEnvelope<T> = serde_json::from_str(&json_str).map_err(|e| {
-            anyhow!("failed to parse AllAnime API response: {e}\nJSON:\n{json_str}")
-        })?;
-
-        Self::extract_data(envelope)
+        // Unreachable, but the compiler needs this.
+        bail!("AllAnime API: exceeded maximum retries");
     }
 
     /// POST a GraphQL request to the AllAnime API and deserialize the `data` field.
@@ -775,8 +815,6 @@ struct AaReqPayload<'a> {
     v: i32,
     ts: u64,
     epoch: i32,
-    #[serde(rename = "buildId")]
-    build_id: &'a str,
     qh: &'a str,
 }
 
@@ -792,12 +830,11 @@ fn build_aa_req(qh: &str) -> Result<String> {
     let payload = serde_json::to_string(&AaReqPayload {
         v: 1,
         ts: ts_u64,
-        epoch: 4128,
-        build_id: "9",
+        epoch: 4130,
         qh,
     })?;
 
-    let iv_input = format!("4128:9:{}:{}", qh, ts_u64);
+    let iv_input = format!("4130:{}:{}", qh, ts_u64);
     let iv_hash = Sha256::digest(iv_input.as_bytes());
     let iv_bytes = &iv_hash[..12];
 
