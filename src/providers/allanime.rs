@@ -68,12 +68,113 @@ const PREFERRED_PROVIDERS: &[&str] = &[
     "Default", "S-mp4", "Luf-Mp4", "Yt-mp4", "Fm-mp4", "Fm-Hls", "Mp4",
 ];
 
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+const KEYGEN_URL: &str =
+    "https://raw.githubusercontent.com/sdaqo/anipy-cli/refs/heads/key-gen/scripts/keygen/keygen.json";
+
+fn keygen_file_path() -> Option<PathBuf> {
+    dirs_next::data_dir()
+        .or_else(dirs_next::config_dir)
+        .map(|d| d.join("anv").join("allanime_keygen.json"))
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn hex_to_32bytes(s: &str) -> Result<[u8; 32]> {
+    let clean = s.trim();
+    if clean.len() != 64 {
+        bail!("hex string length is not 64 characters");
+    }
+    let mut bytes = [0u8; 32];
+    for i in 0..32 {
+        bytes[i] = u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16)
+            .map_err(|e| anyhow!("invalid hex character: {e}"))?;
+    }
+    Ok(bytes)
+}
+
+#[derive(Debug, Clone)]
+pub struct AnimeKeygen {
+    pub epoch: i32,
+    pub key: [u8; 32],
+    pub query_hash: String,
+    pub static_key: [u8; 32],
+}
+
+impl Default for AnimeKeygen {
+    fn default() -> Self {
+        Self {
+            epoch: 4130,
+            key: ALLANIME_CRYPTO_KEY,
+            query_hash: EPISODE_SOURCES_HASH.to_string(),
+            static_key: ALLANIME_RESPONSE_STATIC_KEY,
+        }
+    }
+}
+
+impl AnimeKeygen {
+    pub fn load_stored_or_default() -> Self {
+        if let Some(path) = keygen_file_path() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(file_data) = serde_json::from_str::<StoredKeygen>(&content) {
+                    if let Ok(key_bytes) = hex_to_32bytes(&file_data.key) {
+                        let static_key_bytes = file_data
+                            .static_key
+                            .as_deref()
+                            .and_then(|s| hex_to_32bytes(s).ok())
+                            .unwrap_or(ALLANIME_RESPONSE_STATIC_KEY);
+
+                        return Self {
+                            epoch: file_data.epoch,
+                            key: key_bytes,
+                            query_hash: file_data.query_hash,
+                            static_key: static_key_bytes,
+                        };
+                    }
+                }
+            }
+        }
+        Self::default()
+    }
+
+    pub fn save_stored(&self) {
+        if let Some(path) = keygen_file_path() {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let stored = StoredKeygen {
+                epoch: self.epoch,
+                key: bytes_to_hex(&self.key),
+                query_hash: self.query_hash.clone(),
+                static_key: Some(bytes_to_hex(&self.static_key)),
+            };
+            if let Ok(json_str) = serde_json::to_string_pretty(&stored) {
+                let _ = std::fs::write(path, json_str);
+            }
+        }
+    }
+}
+
+#[derive(Deserialize, serde::Serialize)]
+struct StoredKeygen {
+    epoch: i32,
+    key: String,
+    query_hash: String,
+    static_key: Option<String>,
+}
+
 pub struct AllAnimeClient {
     client: Client,
     prefer_english_titles: bool,
-    /// Base URL for GraphQL API calls.  Defaults to `ALLANIME_API_URL` but can
+    /// Base URL for GraphQL API calls. Defaults to `ALLANIME_API_URL` but can
     /// be overridden with a relay/proxy to bypass Cloudflare geo-blocking.
     api_url: String,
+    keygen: Arc<RwLock<AnimeKeygen>>,
 }
 
 impl AllAnimeClient {
@@ -97,14 +198,54 @@ impl AllAnimeClient {
             _ => ALLANIME_API_URL.to_string(),
         };
 
-        Ok(Self { client, prefer_english_titles, api_url })
+        Ok(Self {
+            client,
+            prefer_english_titles,
+            api_url,
+            keygen: Arc::new(RwLock::new(AnimeKeygen::load_stored_or_default())),
+        })
+    }
+
+    /// Fetch fresh keygen parameters from remote github repository and update disk storage.
+    pub async fn refresh_keygen(&self) -> Result<AnimeKeygen> {
+        eprintln!("[AllAnime] Refreshing crypto keygen parameters from remote repository…");
+        let res = self
+            .client
+            .get(KEYGEN_URL)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<StoredKeygen>()
+            .await?;
+
+        let key_bytes = hex_to_32bytes(&res.key)?;
+        let static_key_bytes = match res.static_key {
+            Some(s) if s.len() == 64 => hex_to_32bytes(&s).unwrap_or(ALLANIME_RESPONSE_STATIC_KEY),
+            _ => ALLANIME_RESPONSE_STATIC_KEY,
+        };
+
+        let new_keygen = AnimeKeygen {
+            epoch: res.epoch,
+            key: key_bytes,
+            query_hash: res.query_hash,
+            static_key: static_key_bytes,
+        };
+
+        new_keygen.save_stored();
+
+        eprintln!(
+            "[AllAnime] Successfully updated keygen (epoch={}, hash={})",
+            new_keygen.epoch, new_keygen.query_hash
+        );
+
+        let mut guard = self.keygen.write().await;
+        *guard = new_keygen.clone();
+        Ok(new_keygen)
     }
 
     /// Execute a GraphQL request (either GET or POST) and deserialize the `data` field.
     ///
-    /// Automatically retries up to 3 times when the API returns a rate-limit error
-    /// ("Too many requests, please try again in N seconds"), honouring the server-
-    /// specified wait time.
+    /// Automatically retries when rate limited or when AA_CRYPTO_STALE is returned.
     async fn execute_graphql<T: DeserializeOwned>(
         &self,
         use_get: bool,
@@ -115,26 +256,25 @@ impl AllAnimeClient {
         const MAX_RETRIES: u32 = 3;
 
         for attempt in 0..=MAX_RETRIES {
+            let current_keygen = self.keygen.read().await.clone();
+
             let request = if use_get {
                 let mut extensions = serde_json::json!({});
                 if let Some(h) = hash {
-                    if h == EPISODE_SOURCES_HASH {
-                        let aa_req = build_aa_req(h)?;
-                        extensions = serde_json::json!({
-                            "persistedQuery": {
-                                "version": 1,
-                                "sha256Hash": h
-                            },
-                            "aaReq": aa_req
-                        });
+                    let active_hash = if h == EPISODE_SOURCES_HASH {
+                        &current_keygen.query_hash
                     } else {
-                        extensions = serde_json::json!({
-                            "persistedQuery": {
-                                "version": 1,
-                                "sha256Hash": h
-                            }
-                        });
-                    }
+                        h
+                    };
+
+                    let aa_req = build_aa_req(active_hash, &current_keygen)?;
+                    extensions = serde_json::json!({
+                        "persistedQuery": {
+                            "version": 1,
+                            "sha256Hash": active_hash
+                        },
+                        "aaReq": aa_req
+                    });
                 }
 
                 self.client
@@ -143,7 +283,8 @@ impl AllAnimeClient {
                         ("variables", serde_json::to_string(&variables)?),
                         ("extensions", serde_json::to_string(&extensions)?),
                     ])
-                    .header("Referer", "https://youtu-chan.com")
+                    .header("Referer", "https://youtu-chan.com/")
+                    .header("Origin", "https://mkissa.to")
             } else {
                 let mut body = serde_json::json!({ "variables": variables });
                 if let Some(q) = query {
@@ -173,10 +314,23 @@ impl AllAnimeClient {
 
             // AllAnime now AES-256-GCM-encrypts responses; detect and unwrap.
             let json_str: std::borrow::Cow<str> = if text.contains("\"tobeparsed\"") {
-                let enc: EncryptedEnvelope = serde_json::from_str(&text).map_err(|e| {
-                    anyhow!("failed to parse encrypted AllAnime envelope: {e}\nRaw:\n{text}")
-                })?;
-                let plaintext = decrypt_tobeparsed(&enc.data.tobeparsed)?;
+                let enc: EncryptedEnvelope = match serde_json::from_str(&text) {
+                    Ok(e) => e,
+                    Err(e) => bail!("failed to parse encrypted AllAnime envelope: {e}\nRaw:\n{text}"),
+                };
+                
+                let plaintext = match decrypt_tobeparsed(&enc.data.tobeparsed, &current_keygen) {
+                    Ok(pt) => pt,
+                    Err(err) => {
+                        if attempt < MAX_RETRIES {
+                            eprintln!("[AllAnime] tobeparsed decryption failed ({err}). Refreshing keygen…");
+                            let _ = self.refresh_keygen().await;
+                            continue;
+                        } else {
+                            bail!(err);
+                        }
+                    }
+                };
 
                 if std::env::var("ANV_DEBUG").is_ok() {
                     eprintln!("[AllAnime] decrypted tobeparsed plaintext:\n{plaintext}");
@@ -189,15 +343,20 @@ impl AllAnimeClient {
                 std::borrow::Cow::Borrowed(&text)
             };
 
-            let envelope: GraphQlEnvelope<T> = serde_json::from_str(&json_str).map_err(|e| {
-                anyhow!("failed to parse AllAnime API response: {e}\nJSON:\n{json_str}")
+            let raw_envelope: GraphQlRawEnvelope = serde_json::from_str(&json_str).map_err(|e| {
+                anyhow!("failed to parse AllAnime API raw envelope: {e}\nJSON:\n{json_str}")
             })?;
 
-            // Check for a rate-limit error before extracting data.
-            // The API returns HTTP 200 with a GraphQL error body, so we have to
-            // inspect the envelope rather than the HTTP status.
-            if let Some(ref errors) = envelope.errors {
+            if let Some(ref errors) = raw_envelope.errors {
                 if let Some(first) = errors.first() {
+                    if first.message.contains("AA_CRYPTO_STALE") || first.message.contains("AA_CRYPTO_MISSING") {
+                        if attempt < MAX_RETRIES {
+                            eprintln!("[AllAnime] Received {}, refreshing keygen and retrying (attempt {}/{MAX_RETRIES})…", first.message, attempt + 1);
+                            let _ = self.refresh_keygen().await;
+                            continue;
+                        }
+                    }
+
                     // Parse "Too many requests, please try again in N seconds."
                     let wait_secs = first
                         .message
@@ -216,13 +375,27 @@ impl AllAnimeClient {
                             continue;
                         }
                     }
+
+                    let joined = errors
+                        .iter()
+                        .map(|e| e.message.as_str())
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    bail!("AllAnime API error: {joined}");
                 }
             }
 
-            return Self::extract_data(envelope);
+            let data_value = raw_envelope
+                .data
+                .ok_or_else(|| anyhow!("AllAnime API returned empty response"))?;
+
+            let data: T = serde_json::from_value(data_value).map_err(|e| {
+                anyhow!("failed to parse AllAnime API data structure: {e}\nJSON:\n{json_str}")
+            })?;
+
+            return Ok(data);
         }
 
-        // Unreachable, but the compiler needs this.
         bail!("AllAnime API: exceeded maximum retries");
     }
 
@@ -264,7 +437,10 @@ impl AllAnimeClient {
                 Some(EPISODE_SOURCES_HASH),
             )
             .await?;
-        Ok(payload.episode.source_urls)
+        Ok(payload
+            .episode
+            .map(|e| e.source_urls)
+            .unwrap_or_default())
     }
 
     async fn fetch_provider_json(&self, path: &str) -> Result<serde_json::Value> {
@@ -777,7 +953,10 @@ fn decode_pair(pair: &str) -> Option<char> {
 /// or a static legacy key (`ALLANIME_RESPONSE_STATIC_KEY`), depending on the rotation.
 /// Both are tried; the first that authenticates successfully is used.
 /// See: anipy-cli PR #335.
-fn decrypt_tobeparsed(blob: &str) -> Result<String> {
+/// Decrypts the `tobeparsed` blob returned by the AllAnime API.
+///
+/// Layout: `base64( prefix[1] || nonce[12] || ciphertext || tag[16] )`
+fn decrypt_tobeparsed(blob: &str, keygen: &AnimeKeygen) -> Result<String> {
     let raw = B64
         .decode(blob)
         .map_err(|e| anyhow!("tobeparsed base64 decode failed: {e}"))?;
@@ -796,11 +975,17 @@ fn decrypt_tobeparsed(blob: &str) -> Result<String> {
 
     let nonce = Nonce::from_slice(nonce_bytes);
 
-    // Try both the aaReq key and the static legacy key. AllAnime rotates between them.
-    let candidate_keys: &[&[u8; 32]] = &[&ALLANIME_CRYPTO_KEY, &ALLANIME_RESPONSE_STATIC_KEY];
+    let candidate_keys: &[&[u8; 32]] = &[
+        &keygen.key,
+        &keygen.static_key,
+        &ALLANIME_CRYPTO_KEY,
+        &ALLANIME_RESPONSE_STATIC_KEY,
+    ];
     for key in candidate_keys {
-        let cipher = Aes256Gcm::new_from_slice(*key)
-            .map_err(|e| anyhow!("failed to initialize AES-GCM: {e}"))?;
+        let cipher = match Aes256Gcm::new_from_slice(*key) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
         if let Ok(plaintext) = cipher.decrypt(nonce, ciphertext_and_tag) {
             return String::from_utf8(plaintext)
                 .map_err(|e| anyhow!("tobeparsed plaintext is not valid UTF-8: {e}"));
@@ -818,8 +1003,8 @@ struct AaReqPayload<'a> {
     qh: &'a str,
 }
 
-fn build_aa_req(qh: &str) -> Result<String> {
-    let key = &ALLANIME_CRYPTO_KEY;
+fn build_aa_req(qh: &str, keygen: &AnimeKeygen) -> Result<String> {
+    let key = &keygen.key;
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| anyhow!("SystemTime before UNIX EPOCH: {e}"))?
@@ -830,11 +1015,11 @@ fn build_aa_req(qh: &str) -> Result<String> {
     let payload = serde_json::to_string(&AaReqPayload {
         v: 1,
         ts: ts_u64,
-        epoch: 4130,
+        epoch: keygen.epoch,
         qh,
     })?;
 
-    let iv_input = format!("4130:{}:{}", qh, ts_u64);
+    let iv_input = format!("{}:{}:{}", keygen.epoch, qh, ts_u64);
     let iv_hash = Sha256::digest(iv_input.as_bytes());
     let iv_bytes = &iv_hash[..12];
 
@@ -915,6 +1100,12 @@ struct FilemoonResponse {
     payload: String,
     #[serde(rename = "key_parts")]
     key_parts: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphQlRawEnvelope {
+    data: Option<serde_json::Value>,
+    errors: Option<Vec<GraphQlError>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1056,7 +1247,7 @@ struct EpisodeDetail {
 
 #[derive(Debug, Deserialize)]
 struct EpisodePayload {
-    episode: EpisodeSources,
+    episode: Option<EpisodeSources>,
 }
 
 #[derive(Debug, Deserialize)]
