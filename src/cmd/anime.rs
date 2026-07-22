@@ -11,7 +11,7 @@ use crate::config::AppConfig;
 use crate::history::{History, HistoryEntry, theme};
 use crate::player::{choose_stream, launch_player};
 use crate::providers::{
-    AnimeProvider, allanime::AllAnimeClient, anineko::AninekoClient, mangadex::MangaDexClient,
+    AnimeProvider, MangaProvider, allanime::AllAnimeClient, anineko::AninekoClient, mangadex::MangaDexClient,
     mangapill::MangapillClient,
 };
 use crate::sync::SyncProvider;
@@ -28,6 +28,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
     sync_provider: Option<&P>,
     binge: bool,
     auto_play_next: bool,
+    provider: Provider,
 ) -> Result<()> {
     let skip_opts = SkipOptions {
         skip_op: cli.skip_op,
@@ -39,19 +40,33 @@ pub async fn run_anime_flow<P: SyncProvider>(
 
     if history_mode {
         if let Some(entry) = history.select_entry()? {
+            let target_provider = if provider != Provider::All {
+                provider
+            } else {
+                entry.provider
+            };
+
             if entry.is_manga {
-                let manga_info = MangaInfo {
-                    id: entry.show_id.clone(),
-                    title: entry.show_title.clone(),
-                    available_chapters: ChapterCounts::default(),
-                };
-                match entry.provider {
+                match target_provider {
                     Provider::All | Provider::Allanime => {
+                        let client = AllAnimeClient::new(
+                            config.prefer_english_titles,
+                            Some(&config.api_proxy),
+                        )?;
+                        let manga_info =
+                            if target_provider == entry.provider || entry.provider == Provider::All
+                            {
+                                MangaInfo {
+                                    id: entry.show_id.clone(),
+                                    title: entry.show_title.clone(),
+                                    available_chapters: ChapterCounts::default(),
+                                }
+                            } else {
+                                resolve_manga_info(&client, &entry.show_title, entry.translation)
+                                    .await?
+                            };
                         read_manga(
-                            &AllAnimeClient::new(
-                                config.prefer_english_titles,
-                                Some(&config.api_proxy),
-                            )?,
+                            &client,
                             entry.translation,
                             manga_info,
                             history,
@@ -63,17 +78,28 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             },
                             auto_play_next,
                             cli.cache_dir.as_deref(),
-                            entry.provider,
+                            Provider::Allanime,
                             config,
                         )
-                        .await?
+                        .await?;
                     }
                     Provider::Anineko => {
-                        bail!("AniNeko provider does not support manga history entries.");
+                        bail!("Provider 'AniNeko' does not support manga.");
                     }
                     Provider::Mangadex => {
+                        let client = MangaDexClient::new()?;
+                        let manga_info = if target_provider == entry.provider {
+                            MangaInfo {
+                                id: entry.show_id.clone(),
+                                title: entry.show_title.clone(),
+                                available_chapters: ChapterCounts::default(),
+                            }
+                        } else {
+                            resolve_manga_info(&client, &entry.show_title, entry.translation)
+                                .await?
+                        };
                         read_manga(
-                            &MangaDexClient::new()?,
+                            &client,
                             entry.translation,
                             manga_info,
                             history,
@@ -85,14 +111,25 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             },
                             auto_play_next,
                             cli.cache_dir.as_deref(),
-                            entry.provider,
+                            Provider::Mangadex,
                             config,
                         )
-                        .await?
+                        .await?;
                     }
                     Provider::Mangapill => {
+                        let client = MangapillClient::new()?;
+                        let manga_info = if target_provider == entry.provider {
+                            MangaInfo {
+                                id: entry.show_id.clone(),
+                                title: entry.show_title.clone(),
+                                available_chapters: ChapterCounts::default(),
+                            }
+                        } else {
+                            resolve_manga_info(&client, &entry.show_title, entry.translation)
+                                .await?
+                        };
                         read_manga(
-                            &MangapillClient::new()?,
+                            &client,
                             entry.translation,
                             manga_info,
                             history,
@@ -104,22 +141,27 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             },
                             auto_play_next,
                             cli.cache_dir.as_deref(),
-                            entry.provider,
+                            Provider::Mangapill,
                             config,
                         )
-                        .await?
+                        .await?;
                     }
                 }
             } else {
-                let show_info = ShowInfo {
-                    id: entry.show_id.clone(),
-                    title: entry.show_title.clone(),
-                    mal_id: None,
-                    available_eps: EpisodeCounts::default(),
-                };
-                match entry.provider {
+                match target_provider {
                     Provider::Anineko => {
                         let client = AninekoClient::new()?;
+                        let show_info = if target_provider == entry.provider {
+                            ShowInfo {
+                                id: entry.show_id.clone(),
+                                title: entry.show_title.clone(),
+                                mal_id: None,
+                                available_eps: EpisodeCounts::default(),
+                            }
+                        } else {
+                            resolve_show_info(&client, &entry.show_title, entry.translation)
+                                .await?
+                        };
                         play_show(
                             &client,
                             history,
@@ -146,12 +188,25 @@ pub async fn run_anime_flow<P: SyncProvider>(
                         )
                         .await?;
                     }
-                    _ => {
+                    Provider::Allanime | Provider::All => {
                         let client = AllAnimeClient::new(
                             config.prefer_english_titles,
                             Some(&config.api_proxy),
                         )?;
                         let fallback = AninekoClient::new().ok();
+                        let show_info =
+                            if target_provider == entry.provider || entry.provider == Provider::All
+                            {
+                                ShowInfo {
+                                    id: entry.show_id.clone(),
+                                    title: entry.show_title.clone(),
+                                    mal_id: None,
+                                    available_eps: EpisodeCounts::default(),
+                                }
+                            } else {
+                                resolve_show_info(&client, &entry.show_title, entry.translation)
+                                    .await?
+                            };
                         play_show(
                             &client,
                             history,
@@ -178,6 +233,12 @@ pub async fn run_anime_flow<P: SyncProvider>(
                         )
                         .await?;
                     }
+                    _ => {
+                        bail!(
+                            "Provider '{}' does not support anime streaming.",
+                            target_provider.display_name()
+                        );
+                    }
                 }
             }
         }
@@ -192,7 +253,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
     let query = cli.query.join(" ");
     let theme = theme();
 
-    match cli.provider {
+    match provider {
         Provider::Anineko => {
             let client = AninekoClient::new()?;
             let shows = client.search_shows(&query, translation).await?;
@@ -565,5 +626,35 @@ pub async fn play_show<P: SyncProvider>(
             }
             (false, candidate) => current_episode = candidate.unwrap_or(chosen),
         }
+    }
+}
+
+async fn resolve_show_info<C: AnimeProvider>(
+    client: &C,
+    title: &str,
+    translation: Translation,
+) -> Result<ShowInfo> {
+    let shows = client.search_shows(title, translation).await?;
+    if let Some(matched) = shows.iter().find(|s| s.title.eq_ignore_ascii_case(title)) {
+        Ok(matched.clone())
+    } else if let Some(first) = shows.first() {
+        Ok(first.clone())
+    } else {
+        bail!("No results found for \"{}\"", title);
+    }
+}
+
+async fn resolve_manga_info<C: MangaProvider>(
+    client: &C,
+    title: &str,
+    translation: Translation,
+) -> Result<MangaInfo> {
+    let mangas = client.search_mangas(title, translation).await?;
+    if let Some(matched) = mangas.iter().find(|m| m.title.eq_ignore_ascii_case(title)) {
+        Ok(matched.clone())
+    } else if let Some(first) = mangas.first() {
+        Ok(first.clone())
+    } else {
+        bail!("No results found for \"{}\"", title);
     }
 }

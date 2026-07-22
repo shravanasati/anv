@@ -102,6 +102,10 @@ pub enum Commands {
         /// Resume from the next episode/chapter instead of the last watched.
         #[arg(short = 'n', long = "next-episode")]
         next_episode: bool,
+
+        /// Content provider to use for streaming or reading.
+        #[arg(short = 'p', long, value_enum, value_name = "PROVIDER")]
+        provider: Option<Provider>,
     },
 
     /// Browse your MAL "Plan to Watch" list and start streaming.
@@ -122,6 +126,10 @@ pub enum Commands {
         /// Resume from the next episode/chapter instead of the last watched.
         #[arg(short = 'n', long = "next-episode")]
         next_episode: bool,
+
+        /// Content provider to use for streaming or reading.
+        #[arg(short = 'p', long, value_enum, value_name = "PROVIDER")]
+        provider: Option<Provider>,
     },
 
     /// Browse your MAL "Watching" list and start streaming.
@@ -142,6 +150,10 @@ pub enum Commands {
         /// Resume from the next episode/chapter instead of the last watched.
         #[arg(short = 'n', long = "next-episode")]
         next_episode: bool,
+
+        /// Content provider to use for streaming or reading.
+        #[arg(short = 'p', long, value_enum, value_name = "PROVIDER")]
+        provider: Option<Provider>,
     },
 
     /// Manage sync with external anime list services (e.g. MyAnimeList).
@@ -190,12 +202,14 @@ async fn run() -> Result<()> {
         Some(Commands::History {
             binge: history_binge,
             next_episode: history_next,
+            provider: history_provider,
         }) => {
             let history_path = history_path()?;
             let mut history = History::load(&history_path)?;
             let mal_client = build_mal_client_if_enabled(&cfg).await;
             let binge = *history_binge || cli.binge || cfg.binge;
             let auto_play_next = *history_next || cfg.auto_play_next;
+            let provider = history_provider.unwrap_or(cli.provider);
             return cmd::anime::run_anime_flow(
                 &cli,
                 &cfg,
@@ -206,6 +220,7 @@ async fn run() -> Result<()> {
                 mal_client.as_ref(),
                 binge,
                 auto_play_next,
+                provider,
             )
             .await;
         }
@@ -214,6 +229,7 @@ async fn run() -> Result<()> {
             dub: wl_dub,
             episode: wl_episode,
             next_episode: wl_next,
+            provider: wl_provider,
         }) => {
             let history_path = history_path()?;
             let mut history = History::load(&history_path)?;
@@ -226,6 +242,7 @@ async fn run() -> Result<()> {
                 Translation::Sub
             };
             let episode = wl_episode.clone().or_else(|| cli.episode.clone());
+            let provider = wl_provider.unwrap_or(cli.provider);
             return match mal_client.as_ref() {
                 None => {
                     eprintln!(
@@ -247,6 +264,7 @@ async fn run() -> Result<()> {
                         client,
                         &cfg,
                         &cli,
+                        provider,
                     )
                     .await
                 }
@@ -257,6 +275,7 @@ async fn run() -> Result<()> {
             dub: w_dub,
             episode: w_episode,
             next_episode: w_next,
+            provider: w_provider,
         }) => {
             let history_path = history_path()?;
             let mut history = History::load(&history_path)?;
@@ -269,6 +288,7 @@ async fn run() -> Result<()> {
                 Translation::Sub
             };
             let episode = w_episode.clone().or_else(|| cli.episode.clone());
+            let provider = w_provider.unwrap_or(cli.provider);
             return match mal_client.as_ref() {
                 None => {
                     eprintln!(
@@ -290,6 +310,7 @@ async fn run() -> Result<()> {
                         client,
                         &cfg,
                         &cli,
+                        provider,
                     )
                     .await
                 }
@@ -392,6 +413,7 @@ async fn run() -> Result<()> {
         mal_client.as_ref(),
         binge,
         auto_play_next,
+        cli.provider,
     )
     .await
 }

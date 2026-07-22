@@ -5,7 +5,9 @@ use crate::Cli;
 use crate::cmd::anime::play_show;
 use crate::config::AppConfig;
 use crate::history::{History, theme};
-use crate::providers::{AnimeProvider, allanime::AllAnimeClient};
+use crate::providers::{
+    AnimeProvider, allanime::AllAnimeClient, anineko::AninekoClient,
+};
 use crate::sync::mal::{MalClient, MalToken, MalWatchlistEntry};
 use crate::types::{EpisodeCounts, Provider, ShowInfo, Translation};
 
@@ -23,7 +25,15 @@ pub async fn run_mal_list(
     mal_client: &MalClient,
     config: &AppConfig,
     cli: &Cli,
+    provider: Provider,
 ) -> Result<()> {
+    if !provider.is_anime() {
+        bail!(
+            "Provider '{}' does not support anime. Valid anime providers: all, allanime, anineko",
+            provider.display_name()
+        );
+    }
+
     println!("Fetching your MAL '{}' list...", list_name);
     let watchlist = match list_type {
         "watching" => mal_client.fetch_watching().await?,
@@ -86,6 +96,95 @@ pub async fn run_mal_list(
         };
 
         let entry: &MalWatchlistEntry = &watchlist[idx];
+
+        if provider == Provider::Anineko {
+            let client = AninekoClient::new()?;
+            println!("Searching AniNeko for \"{}\"...", entry.title);
+            let results = client.search_shows(&entry.title, translation).await?;
+
+            let chosen_show = if let Some(matched) = results
+                .iter()
+                .find(|s| s.mal_id.as_deref() == Some(&entry.mal_id.to_string()))
+            {
+                matched.clone()
+            } else {
+                match results.len() {
+                    0 => {
+                        println!(
+                            "No AniNeko results for \"{}\". Try a different search query (or Esc to go back).",
+                            entry.title
+                        );
+                        let query: String = dialoguer::Input::with_theme(&theme)
+                            .with_prompt("Search query")
+                            .allow_empty(true)
+                            .interact_text()?;
+                        if query.trim().is_empty() {
+                            continue;
+                        }
+                        let retry = client.search_shows(query.trim(), translation).await?;
+                        if retry.is_empty() {
+                            println!("Still no results. Going back to watchlist.");
+                            continue;
+                        }
+                        let opts: Vec<String> = retry
+                            .iter()
+                            .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
+                            .collect();
+                        let pick = dialoguer::Select::with_theme(&theme)
+                            .with_prompt(format!(
+                                "Which AniNeko entry matches \"{}\"? (Esc = back)",
+                                entry.title
+                            ))
+                            .items(&opts)
+                            .default(0)
+                            .interact_opt()?;
+                        let Some(i) = pick else { continue };
+                        retry[i].clone()
+                    }
+                    1 => results[0].clone(),
+                    _ => {
+                        let opts: Vec<String> = results
+                            .iter()
+                            .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
+                            .collect();
+                        let pick = dialoguer::Select::with_theme(&theme)
+                            .with_prompt(format!(
+                                "Which AniNeko entry matches \"{}\"? (Esc = back)",
+                                entry.title
+                            ))
+                            .items(&opts)
+                            .default(0)
+                            .interact_opt()?;
+                        let Some(i) = pick else {
+                            continue;
+                        };
+                        results[i].clone()
+                    }
+                }
+            };
+
+            let mut show = chosen_show;
+            show.mal_id = Some(entry.mal_id.to_string());
+
+            return play_show(
+                &client,
+                history,
+                history_path,
+                translation,
+                Provider::Anineko,
+                show,
+                episode.clone(),
+                entry.num_episodes_watched.map(|n| n.to_string()),
+                auto_play_next,
+                Some(mal_client),
+                binge,
+                config,
+                skip_opts,
+                None,
+            )
+            .await;
+        }
+
         let cached_allanime_id = mal_client.cached_allanime_id(entry.mal_id);
 
         let (allanime_id, mal_id) = if let Some(id) = cached_allanime_id {
@@ -103,6 +202,52 @@ pub async fn run_mal_list(
             } else {
                 match results.len() {
                     0 => {
+                        if provider == Provider::All {
+                            if let Ok(anineko_client) = AninekoClient::new() {
+                                println!("No results on AllAnime. Trying AniNeko fallback...");
+                                if let Ok(retry) = anineko_client.search_shows(&entry.title, translation).await {
+                                    if !retry.is_empty() {
+                                        let chosen = if retry.len() == 1 {
+                                            retry[0].clone()
+                                        } else {
+                                            let opts: Vec<String> = retry
+                                                .iter()
+                                                .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
+                                                .collect();
+                                            let pick = dialoguer::Select::with_theme(&theme)
+                                                .with_prompt(format!(
+                                                    "Which AniNeko entry matches \"{}\"? (Esc = back)",
+                                                    entry.title
+                                                ))
+                                                .items(&opts)
+                                                .default(0)
+                                                .interact_opt()?;
+                                            let Some(i) = pick else { continue };
+                                            retry[i].clone()
+                                        };
+                                        let mut show = chosen;
+                                        show.mal_id = Some(entry.mal_id.to_string());
+                                        return play_show(
+                                            &anineko_client,
+                                            history,
+                                            history_path,
+                                            translation,
+                                            Provider::Anineko,
+                                            show,
+                                            episode.clone(),
+                                            entry.num_episodes_watched.map(|n| n.to_string()),
+                                            auto_play_next,
+                                            Some(mal_client),
+                                            binge,
+                                            config,
+                                            skip_opts,
+                                            None,
+                                        )
+                                        .await;
+                                    }
+                                }
+                            }
+                        }
                         println!(
                             "No AllAnime results for \"{}\". Try a different search query (or Esc to go back).",
                             entry.title
@@ -167,6 +312,12 @@ pub async fn run_mal_list(
             available_eps: EpisodeCounts::default(),
         };
 
+        let fallback_client = if provider == Provider::All {
+            AninekoClient::new().ok()
+        } else {
+            None
+        };
+
         return play_show(
             &allanime,
             history,
@@ -181,7 +332,7 @@ pub async fn run_mal_list(
             binge,
             config,
             skip_opts,
-            None,
+            fallback_client.as_ref(),
         )
         .await;
     }
