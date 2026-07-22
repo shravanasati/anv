@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
@@ -15,7 +15,7 @@ pub mod queries;
 pub mod streams;
 
 pub use crypto::AnimeKeygen;
-use crypto::{build_aa_req, decrypt_tobeparsed, EPISODE_SOURCES_HASH};
+use crypto::{EPISODE_SOURCES_HASH, build_aa_req, decrypt_tobeparsed};
 use models::*;
 use streams::*;
 
@@ -143,14 +143,18 @@ impl AllAnimeClient {
             let json_str: std::borrow::Cow<str> = if text.contains("\"tobeparsed\"") {
                 let enc: EncryptedEnvelope = match serde_json::from_str(&text) {
                     Ok(e) => e,
-                    Err(e) => bail!("failed to parse encrypted AllAnime envelope: {e}\nRaw:\n{text}"),
+                    Err(e) => {
+                        bail!("failed to parse encrypted AllAnime envelope: {e}\nRaw:\n{text}")
+                    }
                 };
 
                 let plaintext = match decrypt_tobeparsed(&enc.data.tobeparsed, &current_keygen) {
                     Ok(pt) => pt,
                     Err(err) => {
                         if attempt < MAX_RETRIES {
-                            eprintln!("[AllAnime] tobeparsed decryption failed ({err}). Refreshing keygen…");
+                            eprintln!(
+                                "[AllAnime] tobeparsed decryption failed ({err}). Refreshing keygen…"
+                            );
                             let _ = self.refresh_keygen().await;
                             continue;
                         } else {
@@ -168,15 +172,22 @@ impl AllAnimeClient {
                 std::borrow::Cow::Borrowed(&text)
             };
 
-            let raw_envelope: GraphQlRawEnvelope = serde_json::from_str(&json_str).map_err(|e| {
-                anyhow!("failed to parse AllAnime API raw envelope: {e}\nJSON:\n{json_str}")
-            })?;
+            let raw_envelope: GraphQlRawEnvelope =
+                serde_json::from_str(&json_str).map_err(|e| {
+                    anyhow!("failed to parse AllAnime API raw envelope: {e}\nJSON:\n{json_str}")
+                })?;
 
             if let Some(ref errors) = raw_envelope.errors {
                 if let Some(first) = errors.first() {
-                    if first.message.contains("AA_CRYPTO_STALE") || first.message.contains("AA_CRYPTO_MISSING") {
+                    if first.message.contains("AA_CRYPTO_STALE")
+                        || first.message.contains("AA_CRYPTO_MISSING")
+                    {
                         if attempt < MAX_RETRIES {
-                            eprintln!("[AllAnime] Received {}, refreshing keygen and retrying (attempt {}/{MAX_RETRIES})…", first.message, attempt + 1);
+                            eprintln!(
+                                "[AllAnime] Received {}, refreshing keygen and retrying (attempt {}/{MAX_RETRIES})…",
+                                first.message,
+                                attempt + 1
+                            );
                             let _ = self.refresh_keygen().await;
                             continue;
                         }
@@ -224,7 +235,10 @@ impl AllAnimeClient {
     }
 
     /// POST a GraphQL request to the AllAnime API and deserialize the `data` field.
-    pub(super) async fn post_graphql<T: DeserializeOwned>(&self, body: &serde_json::Value) -> Result<T> {
+    pub(super) async fn post_graphql<T: DeserializeOwned>(
+        &self,
+        body: &serde_json::Value,
+    ) -> Result<T> {
         let variables = body
             .get("variables")
             .cloned()

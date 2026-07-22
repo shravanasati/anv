@@ -202,8 +202,8 @@ impl AppConfig {
         let changed = merge_missing(&mut on_disk, default_table);
 
         if changed {
-            let new_content = toml::to_string_pretty(&on_disk)
-                .context("failed to serialize updated config")?;
+            let new_content =
+                toml::to_string_pretty(&on_disk).context("failed to serialize updated config")?;
             fs::write(path, format!("{CONFIG_HEADER}{new_content}"))
                 .with_context(|| format!("failed to write updated config to {}", path.display()))?;
             println!(

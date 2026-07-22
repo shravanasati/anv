@@ -1,12 +1,11 @@
 use aes::Aes256;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use base64::{
-    engine::general_purpose::STANDARD as B64,
+    Engine as _, engine::general_purpose::STANDARD as B64,
     engine::general_purpose::URL_SAFE_NO_PAD as B64_URL_SAFE,
-    Engine as _,
 };
-use ctr::cipher::{KeyIvInit, StreamCipher};
 use ctr::Ctr32BE;
+use ctr::cipher::{KeyIvInit, StreamCipher};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -17,8 +16,7 @@ use super::models::FilemoonResponse;
 pub const EPISODE_SOURCES_HASH: &str =
     "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec";
 
-pub const KEYGEN_URL: &str =
-    "https://raw.githubusercontent.com/sdaqo/anipy-cli/refs/heads/key-gen/scripts/keygen/keygen.json";
+pub const KEYGEN_URL: &str = "https://raw.githubusercontent.com/sdaqo/anipy-cli/refs/heads/key-gen/scripts/keygen/keygen.json";
 
 pub fn keygen_file_path() -> Option<PathBuf> {
     dirs_next::data_dir()
@@ -178,12 +176,12 @@ pub fn build_aa_req(qh: &str, keygen: &AnimeKeygen) -> Result<String> {
     let iv_bytes = &iv_hash[..12];
 
     use aes_gcm::{
-        aead::{Aead, KeyInit},
         Aes256Gcm, Nonce,
+        aead::{Aead, KeyInit},
     };
 
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|e| anyhow!("failed to initialize AES-GCM: {e}"))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|e| anyhow!("failed to initialize AES-GCM: {e}"))?;
     let nonce = Nonce::from_slice(iv_bytes);
 
     let encrypted = cipher
@@ -210,8 +208,8 @@ pub fn decrypt_tobeparsed(blob: &str, keygen: &AnimeKeygen) -> Result<String> {
     let ciphertext_and_tag = &raw[13..];
 
     use aes_gcm::{
-        aead::{Aead, KeyInit},
         Aes256Gcm, Nonce,
+        aead::{Aead, KeyInit},
     };
 
     let nonce = Nonce::from_slice(nonce_bytes);

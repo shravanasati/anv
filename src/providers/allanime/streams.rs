@@ -1,5 +1,5 @@
-use crate::types::StreamOption;
 use super::models::ClockLink;
+use crate::types::StreamOption;
 
 pub const PREFERRED_PROVIDERS: &[&str] = &[
     "Default", "S-mp4", "Luf-Mp4", "Yt-mp4", "Fm-mp4", "Fm-Hls", "Mp4",

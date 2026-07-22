@@ -1,13 +1,13 @@
+use anyhow::{Result, bail};
+use futures::{StreamExt, stream::FuturesUnordered};
 use std::collections::HashMap;
-use anyhow::{bail, Result};
-use futures::{stream::FuturesUnordered, StreamExt};
 
 use super::{
-    crypto::{decode_provider_path, decrypt_filemoon, EPISODE_SOURCES_HASH},
+    AllAnimeClient,
+    crypto::{EPISODE_SOURCES_HASH, decode_provider_path, decrypt_filemoon},
     models::*,
     queries::*,
     streams::*,
-    AllAnimeClient,
 };
 use crate::providers::AnimeProvider;
 use crate::types::{EpisodeCounts, ShowInfo, StreamOption, Translation};
@@ -34,17 +34,9 @@ impl AllAnimeClient {
         });
 
         let payload: EpisodePayload = self
-            .execute_graphql(
-                true,
-                variables,
-                None,
-                Some(EPISODE_SOURCES_HASH),
-            )
+            .execute_graphql(true, variables, None, Some(EPISODE_SOURCES_HASH))
             .await?;
-        Ok(payload
-            .episode
-            .map(|e| e.source_urls)
-            .unwrap_or_default())
+        Ok(payload.episode.map(|e| e.source_urls).unwrap_or_default())
     }
 
     pub(super) async fn fetch_single_provider_streams(

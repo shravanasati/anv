@@ -1,11 +1,7 @@
+use anyhow::{Result, bail};
 use std::collections::HashMap;
-use anyhow::{bail, Result};
 
-use super::{
-    models::*,
-    queries::*,
-    AllAnimeClient, ALLANIME_IMAGE_REFERER,
-};
+use super::{ALLANIME_IMAGE_REFERER, AllAnimeClient, models::*, queries::*};
 use crate::providers::MangaProvider;
 use crate::types::{Chapter, ChapterCounts, MangaInfo, Page, Translation};
 

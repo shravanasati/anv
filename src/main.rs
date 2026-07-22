@@ -49,7 +49,7 @@ pub struct Cli {
     #[arg(
         short = 'p',
         long,
-        default_value = "allanime",
+        default_value = "all",
         value_enum,
         value_name = "PROVIDER"
     )]
@@ -323,7 +323,7 @@ async fn run() -> Result<()> {
             Translation::Sub
         };
         match cli.provider {
-            Provider::Allanime => {
+            Provider::All | Provider::Allanime => {
                 let client = AllAnimeClient::new(cfg.prefer_english_titles, Some(&cfg.api_proxy))?;
                 return cmd::manga::run_manga_flow(
                     &cli,
@@ -362,6 +362,9 @@ async fn run() -> Result<()> {
                 )
                 .await;
             }
+            Provider::Anineko => {
+                anyhow::bail!("Provider 'AniNeko' does not support manga.");
+            }
         }
     }
 
@@ -371,8 +374,11 @@ async fn run() -> Result<()> {
         Translation::Sub
     };
 
-    if !matches!(cli.provider, Provider::Allanime) {
-        eprintln!("Warning: Only 'allanime' provider supports anime. Switching to 'allanime'.");
+    if !cli.provider.is_anime() {
+        anyhow::bail!(
+            "Provider '{}' does not support anime. Valid anime providers: all, allanime, anineko",
+            cli.provider.display_name()
+        );
     }
     let binge = cli.binge || cfg.binge;
     let auto_play_next = cfg.auto_play_next;
