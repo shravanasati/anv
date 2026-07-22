@@ -222,7 +222,11 @@ pub struct MalClient {
 impl MalClient {
     /// Build a `MalClient` from an existing (possibly expired) token.
     /// Call `MalClient::authenticate` first if no token exists.
-    pub async fn from_token(client_id: String, token: MalToken, prefer_english_titles: bool) -> Result<Self> {
+    pub async fn from_token(
+        client_id: String,
+        token: MalToken,
+        prefer_english_titles: bool,
+    ) -> Result<Self> {
         let http = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -913,13 +917,17 @@ pub async fn build_mal_client_if_enabled(cfg: &AppConfig) -> Option<MalClient> {
         return None;
     }
     match MalToken::load() {
-        Ok(Some(token)) => match MalClient::from_token(cfg.mal.client_id.clone(), token, cfg.prefer_english_titles).await {
-            Ok(client) => Some(client),
-            Err(err) => {
-                eprintln!("[sync] Failed to initialize MAL client: {err}");
-                None
+        Ok(Some(token)) => {
+            match MalClient::from_token(cfg.mal.client_id.clone(), token, cfg.prefer_english_titles)
+                .await
+            {
+                Ok(client) => Some(client),
+                Err(err) => {
+                    eprintln!("[sync] Failed to initialize MAL client: {err}");
+                    None
+                }
             }
-        },
+        }
         Ok(None) => {
             eprintln!(
                 "[sync] Sync is enabled but no MAL token found. Run `anv sync enable mal` first."

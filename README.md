@@ -278,6 +278,8 @@ After each episode finishes playing:
 
 anv was originally inspired by and started as a port of [ani-cli](https://github.com/pystardust/ani-cli).
 
+Huge thanks to [curd](https://github.com/Wraient/curd) as well.
+
 ## License
 
 Released under the [MIT License](LICENSE). Have fun, stay hydrated, and don't skip the ending songs.

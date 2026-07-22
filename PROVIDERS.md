@@ -2,8 +2,17 @@
 
 ## Supported Providers
 - **AllAnime**: Primary anime provider, supports both sub and dub. Uses an AES-encrypted GraphQL API and obfuscated "clock" URLs for stream links.
+- **AniNeko**: Anime provider (`anineko.to`), supports sub and dub playback via Bibiemb master m3u8 streams and VibePlayer streams (handled with a local HTTP proxy that strips PNG wrappers from video segments).
 - **MangaDex**: Manga provider.
 - **Mangapill**: Manga provider.
+
+## Multi-Provider Fallback Strategy (`-p all`)
+`anv` defaults to `--provider all` (`Provider::All`):
+1. **Anime Mode**:
+   - Queries **AllAnime** first.
+   - If AllAnime returns 0 search results or stream extraction fails during playback, `anv` automatically falls back to **AniNeko**.
+2. **Manga Mode**:
+   - Queries **AllAnime** (manga mode) first, falling back to **MangaDex** and **Mangapill** if necessary.
 
 ## AllAnime Stream Fetching Strategy
 As of May 2026, the `AllAnimeClient` uses a **Concurrent Racing** and **Optimized Query** strategy:
@@ -16,10 +25,7 @@ As of May 2026, the `AllAnimeClient` uses a **Concurrent Racing** and **Optimize
     - **Filemoon (`Fm-mp4`)**: Uses a specialized AES-256-CTR decryption logic to extract links from an encrypted JSON payload (`iv`, `payload`, `key_parts`).
     - **Mp4Upload (`Mp4`)**: Requires a regex-based scrape of the embed iframe with a specific referer (`https://www.mp4upload.com/`).
 
-## Technical Details
-- **Dependency**: Uses `futures` for `FuturesUnordered`, and `aes`/`ctr` for API and Filemoon decryption.
-- **Hashes**: `EPISODE_SOURCES_HASH` is `d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec`.
-- **Referers**: 
-    - API (GET/APQ): `https://youtu-chan.com`
-    - API (POST): `https://allmanga.to`
-    - Streams: Typically `https://youtu-chan.com` or provider-specific (e.g., `mp4upload`).
+## AniNeko Stream Resolution & Local VibeProxy
+- **Bibiemb Embeds**: `anv` parses HLS master playlists and presents quality variants (1080p, 720p, etc.) with original subtitles.
+- **VibePlayer Embeds**: Video segments have PNG headers prepended. `anv` uses an in-memory local HLS proxy server on `127.0.0.1` (`VibeProxy`) to rewrite HLS playlists and dynamically strip PNG `IEND` chunk headers (`0x49 0x45 0x4E 0x44 0xAE 0x42 0x60 0x82`) before serving MPEG-TS (`video/mp2t`) to `mpv`.
+

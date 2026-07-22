@@ -98,7 +98,32 @@ pub struct Page {
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
     #[default]
+    All,
     Allanime,
+    Anineko,
     Mangadex,
     Mangapill,
+}
+
+impl Provider {
+    pub fn is_anime(self) -> bool {
+        matches!(self, Provider::All | Provider::Allanime | Provider::Anineko)
+    }
+
+    pub fn is_manga(self) -> bool {
+        matches!(
+            self,
+            Provider::All | Provider::Allanime | Provider::Mangadex | Provider::Mangapill
+        )
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Provider::All => "All Providers",
+            Provider::Allanime => "AllAnime",
+            Provider::Anineko => "AniNeko",
+            Provider::Mangadex => "MangaDex",
+            Provider::Mangapill => "Mangapill",
+        }
+    }
 }

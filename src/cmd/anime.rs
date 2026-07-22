@@ -11,7 +11,8 @@ use crate::config::AppConfig;
 use crate::history::{History, HistoryEntry, theme};
 use crate::player::{choose_stream, launch_player};
 use crate::providers::{
-    AnimeProvider, allanime::AllAnimeClient, mangadex::MangaDexClient, mangapill::MangapillClient,
+    AnimeProvider, allanime::AllAnimeClient, anineko::AninekoClient, mangadex::MangaDexClient,
+    mangapill::MangapillClient,
 };
 use crate::sync::SyncProvider;
 use crate::types::{ChapterCounts, EpisodeCounts, MangaInfo, Provider, ShowInfo, Translation};
@@ -28,8 +29,6 @@ pub async fn run_anime_flow<P: SyncProvider>(
     binge: bool,
     auto_play_next: bool,
 ) -> Result<()> {
-    let client = AllAnimeClient::new(config.prefer_english_titles, Some(&config.api_proxy))?;
-
     let skip_opts = SkipOptions {
         skip_op: cli.skip_op,
         skip_ed: cli.skip_ed,
@@ -47,9 +46,12 @@ pub async fn run_anime_flow<P: SyncProvider>(
                     available_chapters: ChapterCounts::default(),
                 };
                 match entry.provider {
-                    Provider::Allanime => {
+                    Provider::All | Provider::Allanime => {
                         read_manga(
-                            &AllAnimeClient::new(config.prefer_english_titles, Some(&config.api_proxy))?,
+                            &AllAnimeClient::new(
+                                config.prefer_english_titles,
+                                Some(&config.api_proxy),
+                            )?,
                             entry.translation,
                             manga_info,
                             history,
@@ -65,6 +67,9 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             config,
                         )
                         .await?
+                    }
+                    Provider::Anineko => {
+                        bail!("AniNeko provider does not support manga history entries.");
                     }
                     Provider::Mangadex => {
                         read_manga(
@@ -106,35 +111,74 @@ pub async fn run_anime_flow<P: SyncProvider>(
                     }
                 }
             } else {
-                play_show(
-                    &client,
-                    history,
-                    history_path,
-                    entry.translation,
-                    Provider::Allanime,
-                    ShowInfo {
-                        id: entry.show_id.clone(),
-                        title: entry.show_title.clone(),
-                        mal_id: None,
-                        available_eps: EpisodeCounts::default(),
-                    },
-                    if auto_play_next {
-                        None
-                    } else {
-                        Some(entry.episode.clone())
-                    },
-                    if auto_play_next {
-                        Some(entry.episode.clone())
-                    } else {
-                        None
-                    },
-                    auto_play_next,
-                    sync_provider,
-                    binge,
-                    config,
-                    skip_opts,
-                )
-                .await?;
+                let show_info = ShowInfo {
+                    id: entry.show_id.clone(),
+                    title: entry.show_title.clone(),
+                    mal_id: None,
+                    available_eps: EpisodeCounts::default(),
+                };
+                match entry.provider {
+                    Provider::Anineko => {
+                        let client = AninekoClient::new()?;
+                        play_show(
+                            &client,
+                            history,
+                            history_path,
+                            entry.translation,
+                            Provider::Anineko,
+                            show_info,
+                            if auto_play_next {
+                                None
+                            } else {
+                                Some(entry.episode.clone())
+                            },
+                            if auto_play_next {
+                                Some(entry.episode.clone())
+                            } else {
+                                None
+                            },
+                            auto_play_next,
+                            sync_provider,
+                            binge,
+                            config,
+                            skip_opts,
+                            None,
+                        )
+                        .await?;
+                    }
+                    _ => {
+                        let client = AllAnimeClient::new(
+                            config.prefer_english_titles,
+                            Some(&config.api_proxy),
+                        )?;
+                        let fallback = AninekoClient::new().ok();
+                        play_show(
+                            &client,
+                            history,
+                            history_path,
+                            entry.translation,
+                            Provider::Allanime,
+                            show_info,
+                            if auto_play_next {
+                                None
+                            } else {
+                                Some(entry.episode.clone())
+                            },
+                            if auto_play_next {
+                                Some(entry.episode.clone())
+                            } else {
+                                None
+                            },
+                            auto_play_next,
+                            sync_provider,
+                            binge,
+                            config,
+                            skip_opts,
+                            fallback.as_ref(),
+                        )
+                        .await?;
+                    }
+                }
             }
         }
         return Ok(());
@@ -146,12 +190,151 @@ pub async fn run_anime_flow<P: SyncProvider>(
     }
 
     let query = cli.query.join(" ");
-    let shows = client.search_shows(&query, translation).await?;
-    if shows.is_empty() {
-        bail!("No results for \"{}\" ({})", query, translation.label());
-    }
-
     let theme = theme();
+
+    match cli.provider {
+        Provider::Anineko => {
+            let client = AninekoClient::new()?;
+            let shows = client.search_shows(&query, translation).await?;
+            if shows.is_empty() {
+                bail!(
+                    "No results for \"{}\" ({}) on AniNeko",
+                    query,
+                    translation.label()
+                );
+            }
+            let show = select_show(&shows, translation, &theme)?;
+            let Some(show) = show else {
+                return Ok(());
+            };
+            play_show(
+                &client,
+                history,
+                history_path,
+                translation,
+                Provider::Anineko,
+                show,
+                cli.episode.clone(),
+                None,
+                auto_play_next,
+                sync_provider,
+                binge,
+                config,
+                skip_opts,
+                None,
+            )
+            .await
+        }
+        Provider::Allanime => {
+            let client =
+                AllAnimeClient::new(config.prefer_english_titles, Some(&config.api_proxy))?;
+            let shows = client.search_shows(&query, translation).await?;
+            if shows.is_empty() {
+                bail!(
+                    "No results for \"{}\" ({}) on AllAnime",
+                    query,
+                    translation.label()
+                );
+            }
+            let show = select_show(&shows, translation, &theme)?;
+            let Some(show) = show else {
+                return Ok(());
+            };
+            play_show(
+                &client,
+                history,
+                history_path,
+                translation,
+                Provider::Allanime,
+                show,
+                cli.episode.clone(),
+                None,
+                auto_play_next,
+                sync_provider,
+                binge,
+                config,
+                skip_opts,
+                None,
+            )
+            .await
+        }
+        Provider::All => {
+            let allanime_client =
+                AllAnimeClient::new(config.prefer_english_titles, Some(&config.api_proxy))?;
+            let fallback_client = AninekoClient::new().ok();
+
+            match allanime_client.search_shows(&query, translation).await {
+                Ok(shows) if !shows.is_empty() => {
+                    let show = select_show(&shows, translation, &theme)?;
+                    let Some(show) = show else {
+                        return Ok(());
+                    };
+                    play_show(
+                        &allanime_client,
+                        history,
+                        history_path,
+                        translation,
+                        Provider::Allanime,
+                        show,
+                        cli.episode.clone(),
+                        None,
+                        auto_play_next,
+                        sync_provider,
+                        binge,
+                        config,
+                        skip_opts,
+                        fallback_client.as_ref(),
+                    )
+                    .await
+                }
+                _ => {
+                    if let Some(ref fallback) = fallback_client {
+                        println!("No results on AllAnime. Trying AniNeko fallback...");
+                        let shows = fallback.search_shows(&query, translation).await?;
+                        if shows.is_empty() {
+                            bail!("No results for \"{}\" ({})", query, translation.label());
+                        }
+                        let show = select_show(&shows, translation, &theme)?;
+                        let Some(show) = show else {
+                            return Ok(());
+                        };
+                        play_show(
+                            fallback,
+                            history,
+                            history_path,
+                            translation,
+                            Provider::Anineko,
+                            show,
+                            cli.episode.clone(),
+                            None,
+                            auto_play_next,
+                            sync_provider,
+                            binge,
+                            config,
+                            skip_opts,
+                            None,
+                        )
+                        .await
+                    } else {
+                        bail!("No results for \"{}\" ({})", query, translation.label());
+                    }
+                }
+            }
+        }
+        _ => {
+            bail!(
+                "Provider '{}' does not support anime streaming.",
+                cli.provider.display_name()
+            );
+        }
+    }
+}
+
+fn select_show(
+    shows: &[ShowInfo],
+    translation: Translation,
+    theme: &dialoguer::theme::ColorfulTheme,
+) -> Result<Option<ShowInfo>> {
     let options: Vec<String> = shows
         .iter()
         .map(|s| {
@@ -160,35 +343,19 @@ pub async fn run_anime_flow<P: SyncProvider>(
                 Translation::Dub => s.available_eps.dub,
                 Translation::Raw => 0,
             };
-            format!("{} [{} episodes]", s.title, count)
+            if count > 0 {
+                format!("{} [{} episodes]", s.title, count)
+            } else {
+                s.title.clone()
+            }
         })
         .collect();
-    let selection = Select::with_theme(&theme)
+    let selection = Select::with_theme(theme)
         .with_prompt("Select a show (Esc to cancel)")
         .items(&options)
         .default(0)
         .interact_opt()?;
-    let Some(idx) = selection else {
-        println!("Cancelled.");
-        return Ok(());
-    };
-    let show = shows[idx].clone();
-    play_show(
-        &client,
-        history,
-        history_path,
-        translation,
-        Provider::Allanime,
-        show,
-        cli.episode.clone(),
-        None,
-        auto_play_next,
-        sync_provider,
-        binge,
-        config,
-        skip_opts,
-    )
-    .await
+    Ok(selection.map(|idx| shows[idx].clone()))
 }
 
 pub async fn play_show<P: SyncProvider>(
@@ -205,6 +372,7 @@ pub async fn play_show<P: SyncProvider>(
     binge: bool,
     config: &AppConfig,
     skip_opts: SkipOptions,
+    fallback_client: Option<&AninekoClient>,
 ) -> Result<()> {
     let episodes = client.fetch_episodes(&show.id, translation).await?;
     if episodes.is_empty() {
@@ -240,7 +408,7 @@ pub async fn play_show<P: SyncProvider>(
         println!("Last watched {} episode: {}.", translation.label(), prev);
     }
 
-    let fallback = last_watched
+    let fallback_ep = last_watched
         .clone()
         .unwrap_or_else(|| latest_available.clone());
     let (mut current_episode, mut skip_selection) = match &prefer_episode {
@@ -250,7 +418,7 @@ pub async fn play_show<P: SyncProvider>(
                 "Episode '{}' does not exist for '{}'. Showing episode list.",
                 ep, show.title
             );
-            (fallback, false)
+            (fallback_ep, false)
         }
         None => {
             if auto_play_next {
@@ -264,7 +432,7 @@ pub async fn play_show<P: SyncProvider>(
                     (sorted_episodes.first().unwrap().clone(), true)
                 }
             } else {
-                (fallback, false)
+                (fallback_ep, false)
             }
         }
     };
@@ -297,21 +465,53 @@ pub async fn play_show<P: SyncProvider>(
         let auto_advance = idx == default_idx;
 
         println!("Fetching streams for episode {}...", chosen);
+        let mut active_provider = provider;
         let streams = match client.fetch_streams(&show.id, translation, &chosen).await {
-            Ok(streams) => streams,
-            Err(err) => {
-                if let Some(req_err) = err.downcast_ref::<reqwest::Error>() {
-                    if req_err.status() == Some(StatusCode::BAD_REQUEST) {
-                        eprintln!(
-                            "Episode {chosen} is not yet available for {} translation.",
-                            translation.label()
-                        );
-                        current_episode = latest_available.clone();
-                        continue;
+            Ok(s) if !s.is_empty() => s,
+            res => {
+                if let Err(ref err) = res {
+                    if let Some(req_err) = err.downcast_ref::<reqwest::Error>() {
+                        if req_err.status() == Some(StatusCode::BAD_REQUEST) {
+                            eprintln!(
+                                "Episode {chosen} is not yet available for {} translation.",
+                                translation.label()
+                            );
+                            current_episode = latest_available.clone();
+                            continue;
+                        }
                     }
                 }
-                eprintln!("Error fetching streams: {}", err);
-                continue;
+
+                if let Some(fallback) = fallback_client {
+                    println!(
+                        "No streams found on {active_provider:?}. Attempting AniNeko fallback..."
+                    );
+                    if let Ok(fallback_shows) =
+                        fallback.search_shows(&show.title, translation).await
+                    {
+                        if let Some(fallback_show) = fallback_shows.first() {
+                            if let Ok(fallback_streams) = fallback
+                                .fetch_streams(&fallback_show.id, translation, &chosen)
+                                .await
+                            {
+                                if !fallback_streams.is_empty() {
+                                    active_provider = Provider::Anineko;
+                                    fallback_streams
+                                } else {
+                                    Vec::new()
+                                }
+                            } else {
+                                Vec::new()
+                            }
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                }
             }
         };
 
@@ -344,7 +544,7 @@ pub async fn play_show<P: SyncProvider>(
             show_title: show.title.clone(),
             episode: chosen.clone(),
             translation,
-            provider,
+            provider: active_provider,
             is_manga: false,
             watched_at: Utc::now(),
         });

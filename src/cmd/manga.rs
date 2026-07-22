@@ -23,6 +23,13 @@ pub async fn run_manga_flow(
     auto_play_next: bool,
     config: &AppConfig,
 ) -> Result<()> {
+    if !cli.provider.is_manga() {
+        bail!(
+            "Provider '{}' does not support manga. Valid manga providers: all, allanime, mangadex, mangapill",
+            cli.provider.display_name()
+        );
+    }
+
     if cli.query.is_empty() {
         println!("No query provided. Use `anv --manga <name>`.");
         return Ok(());

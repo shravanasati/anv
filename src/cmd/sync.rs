@@ -181,6 +181,7 @@ pub async fn run_mal_list(
             binge,
             config,
             skip_opts,
+            None,
         )
         .await;
     }
