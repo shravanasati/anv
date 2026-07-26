@@ -15,14 +15,14 @@ pub mod queries;
 pub mod streams;
 
 pub use crypto::AnimeKeygen;
-use crypto::{EPISODE_SOURCES_HASH, build_aa_req, decrypt_tobeparsed};
+use crypto::{build_aa_req, decrypt_tobeparsed};
 use models::*;
 use streams::*;
 
-pub const ALLANIME_API_URL: &str = "https://api.allanime.day/api";
+pub const ALLANIME_API_URL: &str = "https://api.mkissa.net/api";
 pub const ALLANIME_BASE_URL: &str = "https://allanime.day";
 pub const ALLANIME_IMAGE_REFERER: &str = "https://allanime.to";
-pub const ALLANIME_ORIGIN: &str = "https://allanime.day";
+pub const ALLANIME_ORIGIN: &str = "https://mkissa.to";
 
 pub struct AllAnimeClient {
     pub(super) client: Client,
@@ -62,9 +62,9 @@ impl AllAnimeClient {
         })
     }
 
-    /// Fetch fresh keygen parameters from remote github repository and update disk storage.
+    /// Scrape fresh keygen parameters from mkissa.to and update disk storage.
     pub async fn refresh_keygen(&self) -> Result<AnimeKeygen> {
-        let new_keygen = AnimeKeygen::refresh_from_remote(&self.client).await?;
+        let new_keygen = AnimeKeygen::fetch_keys_from_web(&self.client).await?;
         let mut guard = self.keygen.write().await;
         *guard = new_keygen.clone();
         Ok(new_keygen)
@@ -88,17 +88,15 @@ impl AllAnimeClient {
             let request = if use_get {
                 let mut extensions = serde_json::json!({});
                 if let Some(h) = hash {
-                    let active_hash = if h == EPISODE_SOURCES_HASH {
-                        &current_keygen.query_hash
-                    } else {
-                        h
-                    };
-
-                    let aa_req = build_aa_req(active_hash, &current_keygen)?;
+                    // Both `persistedQuery.sha256Hash` and the `qh` field in aaReq must match.
+                    // The server validates this: if qh ≠ sha256Hash, it returns AA_CRYPTO_QUERY_MISMATCH.
+                    // We always use the hash passed in (EPISODE_SOURCES_HASH = "f4662f4b...") for both.
+                    // The keygen's query_hash field is unrelated to this GraphQL persisted query hash.
+                    let aa_req = build_aa_req(h, &current_keygen)?;
                     extensions = serde_json::json!({
                         "persistedQuery": {
                             "version": 1,
-                            "sha256Hash": active_hash
+                            "sha256Hash": h
                         },
                         "aaReq": aa_req
                     });
@@ -110,8 +108,8 @@ impl AllAnimeClient {
                         ("variables", serde_json::to_string(&variables)?),
                         ("extensions", serde_json::to_string(&extensions)?),
                     ])
-                    .header("Referer", "https://youtu-chan.com/")
-                    .header("Origin", "https://mkissa.to")
+                    .header("Referer", ALLANIME_REFERER)
+                    .header("Origin", ALLANIME_ORIGIN)
             } else {
                 let mut body = serde_json::json!({ "variables": variables });
                 if let Some(q) = query {

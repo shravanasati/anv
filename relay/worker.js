@@ -5,7 +5,7 @@
  * Deploy with: wrangler deploy
  */
 
-const UPSTREAM = "https://api.allanime.day";
+const UPSTREAM = "https://api.mkissa.net";
 
 export default {
   async fetch(request) {

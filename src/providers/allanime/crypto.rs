@@ -6,6 +6,7 @@ use base64::{
 };
 use ctr::Ctr32BE;
 use ctr::cipher::{KeyIvInit, StreamCipher};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -14,9 +15,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::models::FilemoonResponse;
 
 pub const EPISODE_SOURCES_HASH: &str =
-    "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec";
+    "f4662f4b7510b26795dd53ef824a0bf1740fbbc5d1273fab18222ac831bca8d0";
 
-pub const KEYGEN_URL: &str = "https://raw.githubusercontent.com/sdaqo/anipy-cli/refs/heads/key-gen/scripts/keygen/keygen.json";
+/// Base URL for the AllAnime web app — used to scrape live keygen parameters.
+const MKISSA_KEYGEN_URL: &str = "https://mkissa.to/";
+/// CDN base for the app's immutable JS bundles (chunks containing the AES mask).
+const KEYGEN_CDN_IMMUTABLE: &str = "https://cdn.allanime.day/all/mk/_app/immutable/";
 
 pub fn keygen_file_path() -> Option<PathBuf> {
     dirs_next::data_dir()
@@ -51,9 +55,11 @@ pub struct AnimeKeygen {
 
 impl Default for AnimeKeygen {
     fn default() -> Self {
+        let key = hex_to_32bytes("a55ce35d83c1417fdfec0192c2b847eeae58d5bbb331a179d293aac40c035795")
+            .unwrap_or([0u8; 32]);
         Self {
-            epoch: 0,
-            key: [0u8; 32],
+            epoch: 6886,
+            key,
             query_hash: EPISODE_SOURCES_HASH.to_string(),
             static_key: [0u8; 32],
         }
@@ -68,18 +74,26 @@ impl AnimeKeygen {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Ok(file_data) = serde_json::from_str::<StoredKeygen>(&content) {
                     if let Ok(key_bytes) = hex_to_32bytes(&file_data.key) {
-                        let static_key_bytes = file_data
-                            .static_key
-                            .as_deref()
-                            .and_then(|s| hex_to_32bytes(s).ok())
-                            .unwrap_or_default();
+                        if file_data.epoch > 0 && key_bytes != [0u8; 32] {
+                            let static_key_bytes = file_data
+                                .static_key
+                                .as_deref()
+                                .and_then(|s| hex_to_32bytes(s).ok())
+                                .unwrap_or_default();
 
-                        return Self {
-                            epoch: file_data.epoch,
-                            key: key_bytes,
-                            query_hash: file_data.query_hash,
-                            static_key: static_key_bytes,
-                        };
+                            let query_hash = if file_data.query_hash.is_empty() {
+                                EPISODE_SOURCES_HASH.to_string()
+                            } else {
+                                file_data.query_hash
+                            };
+
+                            return Self {
+                                epoch: file_data.epoch,
+                                key: key_bytes,
+                                query_hash,
+                                static_key: static_key_bytes,
+                            };
+                        }
                     }
                 }
             }
@@ -104,39 +118,190 @@ impl AnimeKeygen {
         }
     }
 
-    /// Fetch fresh keygen parameters from remote repository and update local storage.
-    pub async fn refresh_from_remote(client: &Client) -> Result<Self> {
-        eprintln!("[AllAnime] Refreshing crypto keygen parameters from remote repository…");
-        let res = client
-            .get(KEYGEN_URL)
+    /// Scrape live keygen parameters from mkissa.to — a Rust port of keygen.py.
+    ///
+    /// Fetches the site HTML to extract `epoch` and `partB`, locates the app
+    /// entry JS, scans its chunk imports for the 64-hex AES mask, then XORs
+    /// mask ^ base64(partB) to derive the key.  Also attempts to extract the
+    /// GraphQL query hash from the chunk source via template-literal resolution.
+    pub async fn fetch_keys_from_web(client: &Client) -> Result<Self> {
+        eprintln!("[AllAnime] Fetching fresh crypto keygen from mkissa.to…");
+
+        let html = client
+            .get(MKISSA_KEYGEN_URL)
             .send()
-            .await?
-            .error_for_status()?
-            .json::<StoredKeygen>()
+            .await
+            .map_err(|e| anyhow!("failed to fetch {MKISSA_KEYGEN_URL}: {e}"))?
+            .text()
             .await?;
 
-        let key_bytes = hex_to_32bytes(&res.key)?;
-        let static_key_bytes = match res.static_key {
-            Some(s) if s.len() == 64 => hex_to_32bytes(&s).unwrap_or_default(),
-            _ => [0u8; 32],
-        };
+        // Extract window.__aaCrypto = {"epoch":…,"partB":"…",…}
+        let aa_re = Regex::new(r"window\.__aaCrypto\s*=\s*(\{[^}]*\})")?;
+        let aa_str = aa_re
+            .captures(&html)
+            .and_then(|c| c.get(1))
+            .ok_or_else(|| anyhow!("__aaCrypto not found on mkissa.to"))?
+            .as_str();
+        let aa: serde_json::Value =
+            serde_json::from_str(aa_str).map_err(|e| anyhow!("failed to parse __aaCrypto: {e}"))?;
 
-        let new_keygen = Self {
-            epoch: res.epoch,
-            key: key_bytes,
-            query_hash: res.query_hash,
-            static_key: static_key_bytes,
-        };
+        let epoch = aa["epoch"]
+            .as_i64()
+            .ok_or_else(|| anyhow!("epoch missing from __aaCrypto"))? as i32;
+        let part_b_str = aa["partB"]
+            .as_str()
+            .ok_or_else(|| anyhow!("partB missing from __aaCrypto"))?;
+        let part_b_bytes = B64
+            .decode(part_b_str)
+            .map_err(|e| anyhow!("partB base64 decode failed: {e}"))?;
 
-        new_keygen.save_stored();
+        // Locate the app entry JS (e.g. "entry/app.DAbj2MyJ.js")
+        let app_re = Regex::new(r#"_app/immutable/(entry/app\.[^"']+\.js)"#)?;
+        let app_path = app_re
+            .captures(&html)
+            .and_then(|c| c.get(1))
+            .ok_or_else(|| anyhow!("app.js entry not found on mkissa.to"))?
+            .as_str();
 
-        eprintln!(
-            "[AllAnime] Successfully updated keygen (epoch={}, hash={})",
-            new_keygen.epoch, new_keygen.query_hash
-        );
+        let app_js = client
+            .get(format!("{KEYGEN_CDN_IMMUTABLE}{app_path}"))
+            .send()
+            .await?
+            .text()
+            .await?;
 
-        Ok(new_keygen)
+        // Collect chunk filenames: "../chunks/Foo.js" → "Foo.js"
+        let chunks_re = Regex::new(r#"["']\.\./(chunks/[A-Za-z0-9_.%-]+\.js)["']"#)?;
+        let chunks: Vec<String> = chunks_re
+            .captures_iter(&app_js)
+            .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
+            .collect();
+
+        eprintln!("[AllAnime] Scanning {} chunk(s) for AES mask…", chunks.len());
+
+        let mask_re = Regex::new("[0-9a-f]{64}")?;
+
+        for chunk in &chunks {
+            let js = match client
+                .get(format!("{KEYGEN_CDN_IMMUTABLE}{chunk}"))
+                .send()
+                .await
+            {
+                Ok(r) => match r.text().await {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                },
+                Err(_) => continue,
+            };
+
+            if !js.contains("__aaCrypto") {
+                continue;
+            }
+
+            let masks: Vec<&str> = mask_re.find_iter(&js).map(|m| m.as_str()).collect();
+            if masks.len() != 1 {
+                continue;
+            }
+
+            let mask_bytes = hex_to_32bytes(masks[0])?;
+            let mut key = [0u8; 32];
+            for i in 0..32 {
+                key[i] = mask_bytes[i] ^ part_b_bytes.get(i).copied().unwrap_or(0);
+            }
+
+            let query_hash = source_query_hash(&js)
+                .unwrap_or_else(|| EPISODE_SOURCES_HASH.to_string());
+
+            let new_keygen = Self {
+                epoch,
+                key,
+                query_hash,
+                static_key: mask_bytes,
+            };
+
+            new_keygen.save_stored();
+            eprintln!(
+                "[AllAnime] Keygen updated (epoch={}, hash={})",
+                new_keygen.epoch, new_keygen.query_hash
+            );
+            return Ok(new_keygen);
+        }
+
+        bail!("no __aaCrypto mask found in any app chunk — keygen refresh failed")
     }
+}
+
+/// Recursively resolve JS template-literal placeholders (`${name}`) within `tmpl`
+/// by looking up variable/function definitions in the surrounding `chunk_js`.
+fn resolve_template(tmpl: &str, chunk_js: &str, depth: usize) -> String {
+    if depth > 6 {
+        return tmpl.to_string();
+    }
+
+    let var_re = match Regex::new(r"\$\{([^}]+)\}") {
+        Ok(r) => r,
+        Err(_) => return tmpl.to_string(),
+    };
+
+    // Collect substitutions first to avoid holding borrows into `tmpl`
+    let names: Vec<String> = var_re
+        .captures_iter(tmpl)
+        .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
+        .collect();
+
+    let mut result = tmpl.to_string();
+    for name in &names {
+        let repl = if name.ends_with("()") {
+            // Arrow function: `helper = e => e ? \`truthy\` : \`falsy\``  — take the false branch.
+            let fn_name = &name[..name.len() - 2];
+            let pattern = format!(
+                "{}\\s*=\\s*\\w+\\s*=>\\s*\\w+\\s*\\?\\s*`[^`]*`\\s*:\\s*`([^`]*)`",
+                regex::escape(fn_name)
+            );
+            Regex::new(&pattern)
+                .ok()
+                .and_then(|re| re.captures(chunk_js))
+                .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
+                .unwrap_or_default()
+        } else {
+            // Plain variable: `name = \`value\``
+            let pattern = format!(
+                "\\b{}\\s*=\\s*`([^`]*)`",
+                regex::escape(name)
+            );
+            Regex::new(&pattern)
+                .ok()
+                .and_then(|re| re.captures(chunk_js))
+                .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
+                .map(|v| resolve_template(&v, chunk_js, depth + 1))
+                .unwrap_or_default()
+        };
+        result = result.replace(&format!("${{{name}}}"), &repl);
+    }
+    result
+}
+
+/// Locate the episode `sourceUrls` GraphQL query template literal in `chunk_js`,
+/// resolve any `${…}` interpolations, then SHA-256 hash the final query string.
+/// Returns `None` if the template cannot be found or fully resolved.
+fn source_query_hash(chunk_js: &str) -> Option<String> {
+    // Match template literals that start with `\nquery(` and contain the episode
+    // sourceUrls fields — the captured group is the query body up to the closing
+    // backtick delimiter.
+    let re = Regex::new("(\\nquery\\([^`]*)`").ok()?;
+    let template = re
+        .captures_iter(chunk_js)
+        .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
+        .find(|t| t.contains("sourceUrls") && t.contains("episode("))?;
+
+    let query = resolve_template(&template, chunk_js, 0);
+    if query.contains("${") {
+        // Unresolved placeholders — hash would be wrong.
+        return None;
+    }
+
+    let hash = Sha256::digest(query.as_bytes());
+    Some(bytes_to_hex(&hash))
 }
 
 #[derive(Deserialize, Serialize)]

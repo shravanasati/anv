@@ -5,7 +5,7 @@ pub const PREFERRED_PROVIDERS: &[&str] = &[
     "Default", "S-mp4", "Luf-Mp4", "Yt-mp4", "Fm-mp4", "Fm-Hls", "Mp4",
 ];
 
-pub const ALLANIME_REFERER: &str = "https://allmanga.to";
+pub const ALLANIME_REFERER: &str = "https://mkissa.to";
 
 pub fn build_stream_option(provider: &str, link: ClockLink) -> StreamOption {
     let quality_label = link
