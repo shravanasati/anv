@@ -8,7 +8,9 @@ use crate::cache::{MangaCacheState, cache_manga_pages};
 use crate::config::AppConfig;
 use crate::history::{History, HistoryEntry, theme};
 use crate::player::launch_image_viewer;
-use crate::providers::MangaProvider;
+use crate::providers::{
+    MangaProvider, allanime::AllAnimeClient, mangadex::MangaDexClient, mangapill::MangapillClient,
+};
 use crate::types::{MangaInfo, Provider, Translation};
 use crate::utils::{next_episode_label_presorted, sorted_episode_labels};
 
@@ -19,7 +21,6 @@ pub async fn run_manga_flow(
     translation: Translation,
     history: &mut History,
     history_path: &Path,
-    client: &impl MangaProvider,
     auto_play_next: bool,
     config: &AppConfig,
 ) -> Result<()> {
@@ -36,12 +37,210 @@ pub async fn run_manga_flow(
     }
 
     let query = cli.query.join(" ");
-    let mangas = client.search_mangas(&query, translation).await?;
-    if mangas.is_empty() {
-        bail!("No results for \"{}\" ({})", query, translation.label());
-    }
-
     let theme = theme();
+
+    match cli.provider {
+        Provider::Allanime => {
+            let client =
+                AllAnimeClient::new(config.prefer_english_titles, Some(&config.api_proxy))?;
+            let mangas = client.search_mangas(&query, translation).await?;
+            if mangas.is_empty() {
+                bail!(
+                    "No results for \"{}\" ({}) on AllAnime",
+                    query,
+                    translation.label()
+                );
+            }
+            let manga = select_manga(&mangas, translation, &theme)?;
+            let Some(manga) = manga else {
+                return Ok(());
+            };
+            read_manga(
+                &client,
+                translation,
+                manga,
+                history,
+                history_path,
+                cli.episode.clone(),
+                auto_play_next,
+                cli.cache_dir.as_deref(),
+                Provider::Allanime,
+                config,
+            )
+            .await
+        }
+        Provider::Mangadex => {
+            let client = MangaDexClient::new()?;
+            let mangas = client.search_mangas(&query, translation).await?;
+            if mangas.is_empty() {
+                bail!(
+                    "No results for \"{}\" ({}) on MangaDex",
+                    query,
+                    translation.label()
+                );
+            }
+            let manga = select_manga(&mangas, translation, &theme)?;
+            let Some(manga) = manga else {
+                return Ok(());
+            };
+            read_manga(
+                &client,
+                translation,
+                manga,
+                history,
+                history_path,
+                cli.episode.clone(),
+                auto_play_next,
+                cli.cache_dir.as_deref(),
+                Provider::Mangadex,
+                config,
+            )
+            .await
+        }
+        Provider::Mangapill => {
+            let client = MangapillClient::new()?;
+            let mangas = client.search_mangas(&query, translation).await?;
+            if mangas.is_empty() {
+                bail!(
+                    "No results for \"{}\" ({}) on Mangapill",
+                    query,
+                    translation.label()
+                );
+            }
+            let manga = select_manga(&mangas, translation, &theme)?;
+            let Some(manga) = manga else {
+                return Ok(());
+            };
+            read_manga(
+                &client,
+                translation,
+                manga,
+                history,
+                history_path,
+                cli.episode.clone(),
+                auto_play_next,
+                cli.cache_dir.as_deref(),
+                Provider::Mangapill,
+                config,
+            )
+            .await
+        }
+        Provider::All => {
+            let allanime =
+                AllAnimeClient::new(config.prefer_english_titles, Some(&config.api_proxy)).ok();
+            let mangadex = MangaDexClient::new().ok();
+            let mangapill = MangapillClient::new().ok();
+
+            println!("Searching across all manga providers for \"{}\"...", query);
+
+            let (allanime_mangas, mangadex_mangas, mangapill_mangas) = tokio::join!(
+                async {
+                    if let Some(ref client) = allanime {
+                        client.search_mangas(&query, translation).await.unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    }
+                },
+                async {
+                    if let Some(ref client) = mangadex {
+                        client.search_mangas(&query, translation).await.unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    }
+                },
+                async {
+                    if let Some(ref client) = mangapill {
+                        client.search_mangas(&query, translation).await.unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    }
+                },
+            );
+
+            let mut combined = Vec::new();
+            for manga in allanime_mangas {
+                combined.push((Provider::Allanime, manga));
+            }
+            for manga in mangadex_mangas {
+                combined.push((Provider::Mangadex, manga));
+            }
+            for manga in mangapill_mangas {
+                combined.push((Provider::Mangapill, manga));
+            }
+
+            if combined.is_empty() {
+                bail!("No results for \"{}\" ({})", query, translation.label());
+            }
+
+            let selection = select_manga_with_provider(&combined, translation, &theme)?;
+            let Some((selected_provider, manga)) = selection else {
+                return Ok(());
+            };
+
+            match selected_provider {
+                Provider::Allanime => {
+                    let client = allanime.expect("AllAnime client must exist if selected");
+                    read_manga(
+                        &client,
+                        translation,
+                        manga,
+                        history,
+                        history_path,
+                        cli.episode.clone(),
+                        auto_play_next,
+                        cli.cache_dir.as_deref(),
+                        Provider::Allanime,
+                        config,
+                    )
+                    .await
+                }
+                Provider::Mangadex => {
+                    let client = mangadex.expect("MangaDex client must exist if selected");
+                    read_manga(
+                        &client,
+                        translation,
+                        manga,
+                        history,
+                        history_path,
+                        cli.episode.clone(),
+                        auto_play_next,
+                        cli.cache_dir.as_deref(),
+                        Provider::Mangadex,
+                        config,
+                    )
+                    .await
+                }
+                Provider::Mangapill => {
+                    let client = mangapill.expect("Mangapill client must exist if selected");
+                    read_manga(
+                        &client,
+                        translation,
+                        manga,
+                        history,
+                        history_path,
+                        cli.episode.clone(),
+                        auto_play_next,
+                        cli.cache_dir.as_deref(),
+                        Provider::Mangapill,
+                        config,
+                    )
+                    .await
+                }
+                _ => unreachable!(),
+            }
+        }
+        _ => bail!(
+            "Provider '{}' does not support manga.",
+            cli.provider.display_name()
+        ),
+    }
+}
+
+fn select_manga(
+    mangas: &[MangaInfo],
+    translation: Translation,
+    theme: &dialoguer::theme::ColorfulTheme,
+) -> Result<Option<MangaInfo>> {
     let options: Vec<String> = mangas
         .iter()
         .map(|m| {
@@ -53,29 +252,40 @@ pub async fn run_manga_flow(
             format!("{} [{} chapters]", m.title, count)
         })
         .collect();
-    let selection = Select::with_theme(&theme)
+    let selection = Select::with_theme(theme)
         .with_prompt("Select a manga (Esc to cancel)")
         .items(&options)
         .default(0)
         .interact_opt()?;
-    let Some(idx) = selection else {
-        println!("Cancelled.");
-        return Ok(());
-    };
-    let manga = mangas[idx].clone();
-    read_manga(
-        client,
-        translation,
-        manga,
-        history,
-        history_path,
-        cli.episode.clone(),
-        auto_play_next,
-        cli.cache_dir.as_deref(),
-        cli.provider,
-        config,
-    )
-    .await
+    Ok(selection.map(|idx| mangas[idx].clone()))
+}
+
+fn select_manga_with_provider(
+    items: &[(Provider, MangaInfo)],
+    translation: Translation,
+    theme: &dialoguer::theme::ColorfulTheme,
+) -> Result<Option<(Provider, MangaInfo)>> {
+    let options: Vec<String> = items
+        .iter()
+        .map(|(provider, m)| {
+            let count = match translation {
+                Translation::Sub => m.available_chapters.sub,
+                Translation::Raw => m.available_chapters.raw,
+                Translation::Dub => 0,
+            };
+            if count > 0 {
+                format!("{} [{}] [{} chapters]", m.title, provider.display_name(), count)
+            } else {
+                format!("{} [{}]", m.title, provider.display_name())
+            }
+        })
+        .collect();
+    let selection = Select::with_theme(theme)
+        .with_prompt("Select a manga (Esc to cancel)")
+        .items(&options)
+        .default(0)
+        .interact_opt()?;
+    Ok(selection.map(|idx| items[idx].clone()))
 }
 
 pub async fn read_manga(

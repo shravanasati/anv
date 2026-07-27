@@ -392,17 +392,62 @@ pub async fn run_anime_flow<P: SyncProvider>(
         }
         Provider::All => {
             let allanime_client =
-                AllAnimeClient::new(config.prefer_english_titles, Some(&config.api_proxy))?;
-            let fallback_client = AninekoClient::new().ok();
+                AllAnimeClient::new(config.prefer_english_titles, Some(&config.api_proxy)).ok();
+            let anineko_client = AninekoClient::new().ok();
+            let senshi_client = SenshiClient::new().ok();
 
-            match allanime_client.search_shows(&query, translation).await {
-                Ok(shows) if !shows.is_empty() => {
-                    let show = select_show(&shows, translation, &theme)?;
-                    let Some(show) = show else {
-                        return Ok(());
-                    };
+            println!("Searching across all anime providers for \"{}\"...", query);
+
+            let (allanime_shows, anineko_shows, senshi_shows) = tokio::join!(
+                async {
+                    if let Some(ref client) = allanime_client {
+                        client.search_shows(&query, translation).await.unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    }
+                },
+                async {
+                    if let Some(ref client) = anineko_client {
+                        client.search_shows(&query, translation).await.unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    }
+                },
+                async {
+                    if let Some(ref client) = senshi_client {
+                        client.search_shows(&query, translation).await.unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    }
+                },
+            );
+
+            let mut combined = Vec::new();
+            for show in allanime_shows {
+                combined.push((Provider::Allanime, show));
+            }
+            for show in anineko_shows {
+                combined.push((Provider::Anineko, show));
+            }
+            for show in senshi_shows {
+                combined.push((Provider::Senshi, show));
+            }
+
+            if combined.is_empty() {
+                bail!("No results for \"{}\" ({})", query, translation.label());
+            }
+
+            let selection = select_show_with_provider(&combined, translation, &theme)?;
+            let Some((selected_provider, show)) = selection else {
+                return Ok(());
+            };
+
+            match selected_provider {
+                Provider::Allanime => {
+                    let client = allanime_client
+                        .expect("AllAnime client must be present if item was selected");
                     play_show(
-                        &allanime_client,
+                        &client,
                         history,
                         history_path,
                         translation,
@@ -415,42 +460,53 @@ pub async fn run_anime_flow<P: SyncProvider>(
                         binge,
                         config,
                         skip_opts,
-                        fallback_client.as_ref(),
+                        anineko_client.as_ref(),
                     )
                     .await
                 }
-                _ => {
-                    if let Some(ref fallback) = fallback_client {
-                        println!("No results on AllAnime. Trying AniNeko fallback...");
-                        let shows = fallback.search_shows(&query, translation).await?;
-                        if shows.is_empty() {
-                            bail!("No results for \"{}\" ({})", query, translation.label());
-                        }
-                        let show = select_show(&shows, translation, &theme)?;
-                        let Some(show) = show else {
-                            return Ok(());
-                        };
-                        play_show(
-                            fallback,
-                            history,
-                            history_path,
-                            translation,
-                            Provider::Anineko,
-                            show,
-                            cli.episode.clone(),
-                            None,
-                            auto_play_next,
-                            sync_provider,
-                            binge,
-                            config,
-                            skip_opts,
-                            None,
-                        )
-                        .await
-                    } else {
-                        bail!("No results for \"{}\" ({})", query, translation.label());
-                    }
+                Provider::Anineko => {
+                    let client = anineko_client
+                        .expect("AniNeko client must be present if item was selected");
+                    play_show(
+                        &client,
+                        history,
+                        history_path,
+                        translation,
+                        Provider::Anineko,
+                        show,
+                        cli.episode.clone(),
+                        None,
+                        auto_play_next,
+                        sync_provider,
+                        binge,
+                        config,
+                        skip_opts,
+                        None,
+                    )
+                    .await
                 }
+                Provider::Senshi => {
+                    let client =
+                        senshi_client.expect("Senshi client must be present if item was selected");
+                    play_show(
+                        &client,
+                        history,
+                        history_path,
+                        translation,
+                        Provider::Senshi,
+                        show,
+                        cli.episode.clone(),
+                        None,
+                        auto_play_next,
+                        sync_provider,
+                        binge,
+                        config,
+                        skip_opts,
+                        None,
+                    )
+                    .await
+                }
+                _ => unreachable!(),
             }
         }
         _ => {
@@ -488,6 +544,34 @@ fn select_show(
         .default(0)
         .interact_opt()?;
     Ok(selection.map(|idx| shows[idx].clone()))
+}
+
+fn select_show_with_provider(
+    items: &[(Provider, ShowInfo)],
+    translation: Translation,
+    theme: &dialoguer::theme::ColorfulTheme,
+) -> Result<Option<(Provider, ShowInfo)>> {
+    let options: Vec<String> = items
+        .iter()
+        .map(|(provider, s)| {
+            let count = match translation {
+                Translation::Sub => s.available_eps.sub,
+                Translation::Dub => s.available_eps.dub,
+                Translation::Raw => 0,
+            };
+            if count > 0 {
+                format!("{} [{}] [{} episodes]", s.title, provider.display_name(), count)
+            } else {
+                format!("{} [{}]", s.title, provider.display_name())
+            }
+        })
+        .collect();
+    let selection = Select::with_theme(theme)
+        .with_prompt("Select a show (Esc to cancel)")
+        .items(&options)
+        .default(0)
+        .interact_opt()?;
+    Ok(selection.map(|idx| items[idx].clone()))
 }
 
 pub async fn play_show<P: SyncProvider>(

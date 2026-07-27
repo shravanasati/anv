@@ -17,7 +17,6 @@ mod types;
 mod utils;
 
 use history::{History, history_path};
-use providers::{allanime::AllAnimeClient, mangadex::MangaDexClient, mangapill::MangapillClient};
 use sync::mal::build_mal_client_if_enabled;
 use types::{Provider, Translation};
 
@@ -343,53 +342,15 @@ async fn run() -> Result<()> {
         } else {
             Translation::Sub
         };
-        match cli.provider {
-            Provider::All | Provider::Allanime => {
-                let client = AllAnimeClient::new(cfg.prefer_english_titles, Some(&cfg.api_proxy))?;
-                return cmd::manga::run_manga_flow(
-                    &cli,
-                    translation,
-                    &mut history,
-                    &history_path,
-                    &client,
-                    cfg.auto_play_next,
-                    &cfg,
-                )
-                .await;
-            }
-            Provider::Mangadex => {
-                let client = MangaDexClient::new()?;
-                return cmd::manga::run_manga_flow(
-                    &cli,
-                    translation,
-                    &mut history,
-                    &history_path,
-                    &client,
-                    cfg.auto_play_next,
-                    &cfg,
-                )
-                .await;
-            }
-            Provider::Mangapill => {
-                let client = MangapillClient::new()?;
-                return cmd::manga::run_manga_flow(
-                    &cli,
-                    translation,
-                    &mut history,
-                    &history_path,
-                    &client,
-                    cfg.auto_play_next,
-                    &cfg,
-                )
-                .await;
-            }
-            Provider::Anineko => {
-                anyhow::bail!("Provider 'AniNeko' does not support manga.");
-            }
-            Provider::Senshi => {
-                anyhow::bail!("Provider 'Senshi' does not support manga.");
-            }
-        }
+        return cmd::manga::run_manga_flow(
+            &cli,
+            translation,
+            &mut history,
+            &history_path,
+            cfg.auto_play_next,
+            &cfg,
+        )
+        .await;
     }
 
     let translation = if cli.dub {
