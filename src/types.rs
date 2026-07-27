@@ -103,11 +103,15 @@ pub enum Provider {
     Anineko,
     Mangadex,
     Mangapill,
+    Senshi,
 }
 
 impl Provider {
     pub fn is_anime(self) -> bool {
-        matches!(self, Provider::All | Provider::Allanime | Provider::Anineko)
+        matches!(
+            self,
+            Provider::All | Provider::Allanime | Provider::Anineko | Provider::Senshi
+        )
     }
 
     pub fn is_manga(self) -> bool {
@@ -124,6 +128,7 @@ impl Provider {
             Provider::Anineko => "AniNeko",
             Provider::Mangadex => "MangaDex",
             Provider::Mangapill => "Mangapill",
+            Provider::Senshi => "Senshi",
         }
     }
 }

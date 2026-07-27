@@ -54,11 +54,14 @@ pub async fn launch_player(
     config: &AppConfig,
     skip_opts: SkipOptions,
 ) -> Result<()> {
+    let debug = std::env::var("ANV_DEBUG").is_ok();
     let player = detect_player(config);
     let mut cmd = build_command(&player)?;
     let media_title = format!("{title} - Episode {episode}");
-    cmd.arg("--quiet");
-    cmd.arg("--terminal=no");
+    if !debug {
+        cmd.arg("--quiet");
+        cmd.arg("--terminal=no");
+    }
     cmd.arg(format!("--force-media-title={media_title}"));
 
     if let Some(mid) = mal_id {
@@ -87,8 +90,12 @@ pub async fn launch_player(
     }
     cmd.arg(&stream.url);
 
-    let status = match cmd.status().await {
-        Ok(status) => status,
+    if debug {
+        eprintln!("[ANV_DEBUG] Launching player command: {:?}", cmd);
+    }
+
+    let output = match cmd.output().await {
+        Ok(output) => output,
         Err(err) => {
             if err.kind() == std::io::ErrorKind::NotFound {
                 let bin = shlex::split(&player)
@@ -104,8 +111,32 @@ pub async fn launch_player(
         }
     };
 
-    if !status.success() {
-        bail!("player exited with status {status}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut combined = String::new();
+    if !stdout.trim().is_empty() {
+        combined.push_str(stdout.trim());
+    }
+    if !stderr.trim().is_empty() {
+        if !combined.is_empty() {
+            combined.push('\n');
+        }
+        combined.push_str(stderr.trim());
+    }
+
+    if debug && !combined.is_empty() {
+        eprintln!("[ANV_DEBUG] mpv output:\n{combined}");
+    }
+
+    if !output.status.success() {
+        if !combined.is_empty() {
+            bail!(
+                "player exited with status {}\nmpv error:\n{combined}",
+                output.status
+            );
+        } else {
+            bail!("player exited with status {}", output.status);
+        }
     }
     Ok(())
 }
