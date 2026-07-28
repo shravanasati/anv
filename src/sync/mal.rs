@@ -70,11 +70,16 @@ impl MalToken {
     }
 }
 
-/// Persistent cache that maps AllAnime show IDs to MAL anime IDs.
+use crate::types::Provider;
+
+/// Persistent cache that maps provider show IDs to MAL anime IDs.
 /// The confirmation dialog is shown only for IDs not yet in this cache.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct MalIdCache {
+    #[serde(default)]
     entries: HashMap<String, u32>,
+    #[serde(default)]
+    anineko_entries: HashMap<String, u32>,
 }
 
 impl MalIdCache {
@@ -94,21 +99,34 @@ impl MalIdCache {
             .with_context(|| format!("failed to parse ID cache {}", path.display()))
     }
 
-    pub fn get(&self, allanime_id: &str) -> Option<u32> {
-        self.entries.get(allanime_id).copied()
+    pub fn get(&self, show_id: &str, provider: Provider) -> Option<u32> {
+        match provider {
+            Provider::Anineko => self.anineko_entries.get(show_id).copied(),
+            _ => self.entries.get(show_id).copied(),
+        }
     }
 
-    /// Reverse lookup: given a MAL anime ID, return the AllAnime show ID if it
+    /// Reverse lookup: given a MAL anime ID, return the provider show ID if it
     /// was previously cached
-    pub fn get_allanime_id(&self, mal_id: u32) -> Option<String> {
-        self.entries
-            .iter()
+    pub fn get_cached_id(&self, mal_id: u32, provider: Provider) -> Option<String> {
+        let map = match provider {
+            Provider::Anineko => &self.anineko_entries,
+            _ => &self.entries,
+        };
+        map.iter()
             .find(|(_, v)| **v == mal_id)
             .map(|(k, _)| k.clone())
     }
 
-    pub fn insert_and_save(&mut self, allanime_id: &str, mal_id: u32) -> Result<()> {
-        self.entries.insert(allanime_id.to_string(), mal_id);
+    pub fn insert_and_save(&mut self, show_id: &str, mal_id: u32, provider: Provider) -> Result<()> {
+        match provider {
+            Provider::Anineko => {
+                self.anineko_entries.insert(show_id.to_string(), mal_id);
+            }
+            _ => {
+                self.entries.insert(show_id.to_string(), mal_id);
+            }
+        }
         let path = Self::cache_path()?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
@@ -615,8 +633,8 @@ impl MalClient {
 }
 
 impl SyncProvider for MalClient {
-    async fn sync_episode(&self, show_id: &str, show_title: &str, ep_num: u32) -> Result<()> {
-        self.do_sync_episode(show_id, show_title, ep_num).await
+    async fn sync_episode(&self, show_id: &str, show_title: &str, ep_num: u32, provider: Provider) -> Result<()> {
+        self.do_sync_episode(show_id, show_title, ep_num, provider).await
     }
 }
 
@@ -718,16 +736,16 @@ impl MalClient {
         Ok(entries)
     }
 
-    pub fn cached_allanime_id(&self, mal_id: u32) -> Option<String> {
-        self.id_cache.lock().unwrap().get_allanime_id(mal_id)
+    pub fn cached_id(&self, mal_id: u32, provider: Provider) -> Option<String> {
+        self.id_cache.lock().unwrap().get_cached_id(mal_id, provider)
     }
 
-    pub fn cache_allanime_id(&self, allanime_id: &str, mal_id: u32) {
+    pub fn cache_id(&self, show_id: &str, mal_id: u32, provider: Provider) {
         if let Err(err) = self
             .id_cache
             .lock()
             .unwrap()
-            .insert_and_save(allanime_id, mal_id)
+            .insert_and_save(show_id, mal_id, provider)
         {
             eprintln!("[watchlist] Warning: could not save ID cache: {err}");
         }
@@ -737,18 +755,18 @@ impl MalClient {
     /// or via search + user confirmation), checks current remote state, skips
     /// if MAL already tracks at least this episode, prompts the user when the
     /// status is changing, and posts the patch request.
-    async fn do_sync_episode(&self, show_id: &str, show_title: &str, ep_num: u32) -> Result<()> {
+    async fn do_sync_episode(&self, show_id: &str, show_title: &str, ep_num: u32, provider: Provider) -> Result<()> {
         // 1. Resolve MAL ID — check internal cache first.
         if self.skipped_ids.lock().unwrap().contains(show_id) {
             return Ok(()); // user already declined this show this session
         }
-        let cached_id = self.id_cache.lock().unwrap().get(show_id);
+        let cached_id = self.id_cache.lock().unwrap().get(show_id, provider);
         let mal_id = if let Some(id) = cached_id {
             id
         } else {
             match self.resolve_and_confirm_mal_id(show_title).await {
                 Ok(Some(id)) => {
-                    if let Err(err) = self.id_cache.lock().unwrap().insert_and_save(show_id, id) {
+                    if let Err(err) = self.id_cache.lock().unwrap().insert_and_save(show_id, id, provider) {
                         eprintln!("[sync] Warning: could not save ID cache: {err}");
                     }
                     id

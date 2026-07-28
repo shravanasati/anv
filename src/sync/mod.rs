@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use crate::sync::mal::CurrentListStatus;
+use crate::types::Provider;
 
 pub mod mal;
 
@@ -66,11 +67,13 @@ pub trait SyncProvider: Send + Sync {
     /// * `show_id`    — the local provider ID (e.g. AllAnime show ID)
     /// * `show_title` — human-readable title used in prompts and log lines
     /// * `ep_num`     — 1-based episode number just finished
+    /// * `provider`   — the active provider (e.g. AnimeProvider)
     fn sync_episode(
         &self,
         show_id: &str,
         show_title: &str,
         ep_num: u32,
+        provider: Provider,
     ) -> impl std::future::Future<Output = Result<()>> + Send;
 }
 

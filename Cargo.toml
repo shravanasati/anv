@@ -8,7 +8,7 @@ repository = "https://github.com/shravanasati/anv"
 description = "Stream anime or read manga from AllAnime straight into mpv from your terminal."
 keywords = ["anime", "cli", "streaming", "mpv"]
 categories = ["command-line-utilities", "multimedia::video"]
-authors = ["Vedant Asati"]
+authors = ["Vedant Asati", "Shravan Asati"]
 rust-version = "1.85"
 
 [dependencies]

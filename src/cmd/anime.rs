@@ -768,7 +768,7 @@ pub async fn play_show<P: SyncProvider>(
 
         if let Some(provider) = sync_provider {
             let ep_num = chosen.parse::<u32>().unwrap_or(0);
-            if let Err(err) = provider.sync_episode(&show.id, &show.title, ep_num).await {
+            if let Err(err) = provider.sync_episode(&show.id, &show.title, ep_num, active_provider).await {
                 eprintln!("[sync] error: {err}");
             }
         }

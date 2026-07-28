@@ -253,6 +253,7 @@ pub async fn run_mal_list(
 
             let mut show = chosen_show;
             show.mal_id = Some(entry.mal_id.to_string());
+            mal_client.cache_id(&show.id, entry.mal_id, Provider::Anineko);
 
             return play_show(
                 &client,
@@ -273,7 +274,66 @@ pub async fn run_mal_list(
             .await;
         }
 
-        let cached_allanime_id = mal_client.cached_allanime_id(entry.mal_id);
+        let cached_allanime_id = mal_client.cached_id(entry.mal_id, Provider::Allanime);
+        let cached_anineko_id = mal_client.cached_id(entry.mal_id, Provider::Anineko);
+
+        if provider == Provider::Anineko {
+            if let Some(anineko_id) = cached_anineko_id {
+                let show = ShowInfo {
+                    id: anineko_id,
+                    title: entry.title.clone(),
+                    mal_id: Some(entry.mal_id.to_string()),
+                    available_eps: EpisodeCounts::default(),
+                };
+                let client = AninekoClient::new()?;
+                return play_show(
+                    &client,
+                    history,
+                    history_path,
+                    translation,
+                    Provider::Anineko,
+                    show,
+                    episode.clone(),
+                    entry.num_episodes_watched.map(|n| n.to_string()),
+                    auto_play_next,
+                    Some(mal_client),
+                    binge,
+                    config,
+                    skip_opts,
+                    None,
+                )
+                .await;
+            }
+        } else if provider == Provider::All {
+            if cached_allanime_id.is_none() {
+                if let Some(anineko_id) = cached_anineko_id {
+                    let show = ShowInfo {
+                        id: anineko_id,
+                        title: entry.title.clone(),
+                        mal_id: Some(entry.mal_id.to_string()),
+                        available_eps: EpisodeCounts::default(),
+                    };
+                    let client = AninekoClient::new()?;
+                    return play_show(
+                        &client,
+                        history,
+                        history_path,
+                        translation,
+                        Provider::Anineko,
+                        show,
+                        episode.clone(),
+                        entry.num_episodes_watched.map(|n| n.to_string()),
+                        auto_play_next,
+                        Some(mal_client),
+                        binge,
+                        config,
+                        skip_opts,
+                        None,
+                    )
+                    .await;
+                }
+            }
+        }
 
         let (allanime_id, mal_id) = if let Some(id) = cached_allanime_id {
             (id, Some(entry.mal_id.to_string()))
@@ -285,7 +345,7 @@ pub async fn run_mal_list(
                 .iter()
                 .find(|s| s.mal_id.as_deref() == Some(&entry.mal_id.to_string()))
             {
-                mal_client.cache_allanime_id(&matched.id, entry.mal_id);
+                mal_client.cache_id(&matched.id, entry.mal_id, Provider::Allanime);
                 (matched.id.clone(), matched.mal_id.clone())
             } else {
                 match results.len() {
@@ -322,6 +382,7 @@ pub async fn run_mal_list(
                                         };
                                         let mut show = chosen;
                                         show.mal_id = Some(entry.mal_id.to_string());
+                                        mal_client.cache_id(&show.id, entry.mal_id, Provider::Anineko);
                                         return play_show(
                                             &anineko_client,
                                             history,
@@ -373,7 +434,7 @@ pub async fn run_mal_list(
                             .interact_opt()?;
                         let Some(i) = pick else { continue };
                         let chosen = &retry[i];
-                        mal_client.cache_allanime_id(&chosen.id, entry.mal_id);
+                        mal_client.cache_id(&chosen.id, entry.mal_id, Provider::Allanime);
                         (chosen.id.clone(), chosen.mal_id.clone())
                     }
                     _ => {
@@ -393,7 +454,7 @@ pub async fn run_mal_list(
                             continue;
                         };
                         let chosen = &results[i];
-                        mal_client.cache_allanime_id(&chosen.id, entry.mal_id);
+                        mal_client.cache_id(&chosen.id, entry.mal_id, Provider::Allanime);
                         (chosen.id.clone(), chosen.mal_id.clone())
                     }
                 }
