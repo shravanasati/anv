@@ -9,7 +9,7 @@ use crate::config::AppConfig;
 use crate::history::{History, HistoryEntry, theme};
 use crate::player::launch_image_viewer;
 use crate::providers::{
-    MangaProvider, allanime::AllAnimeClient, mangadex::MangaDexClient, mangapill::MangapillClient,
+    MangaProvider, mangadex::MangaDexClient, mangapill::MangapillClient,
 };
 use crate::types::{MangaInfo, Provider, Translation};
 use crate::utils::{next_episode_label_presorted, sorted_episode_labels};
@@ -26,7 +26,7 @@ pub async fn run_manga_flow(
 ) -> Result<()> {
     if !cli.provider.is_manga() {
         bail!(
-            "Provider '{}' does not support manga. Valid manga providers: all, allanime, mangadex, mangapill",
+            "Provider '{}' does not support manga. Valid manga providers: all, mangadex, mangapill",
             cli.provider.display_name()
         );
     }
@@ -40,35 +40,6 @@ pub async fn run_manga_flow(
     let theme = theme();
 
     match cli.provider {
-        Provider::Allanime => {
-            let client =
-                AllAnimeClient::new(config.prefer_english_titles, Some(&config.api_proxy))?;
-            let mangas = client.search_mangas(&query, translation).await?;
-            if mangas.is_empty() {
-                bail!(
-                    "No results for \"{}\" ({}) on AllAnime",
-                    query,
-                    translation.label()
-                );
-            }
-            let manga = select_manga(&mangas, translation, &theme)?;
-            let Some(manga) = manga else {
-                return Ok(());
-            };
-            read_manga(
-                &client,
-                translation,
-                manga,
-                history,
-                history_path,
-                cli.episode.clone(),
-                auto_play_next,
-                cli.cache_dir.as_deref(),
-                Provider::Allanime,
-                config,
-            )
-            .await
-        }
         Provider::Mangadex => {
             let client = MangaDexClient::new()?;
             let mangas = client.search_mangas(&query, translation).await?;
@@ -126,21 +97,12 @@ pub async fn run_manga_flow(
             .await
         }
         Provider::All => {
-            let allanime =
-                AllAnimeClient::new(config.prefer_english_titles, Some(&config.api_proxy)).ok();
             let mangadex = MangaDexClient::new().ok();
             let mangapill = MangapillClient::new().ok();
 
             println!("Searching across all manga providers for \"{}\"...", query);
 
-            let (allanime_mangas, mangadex_mangas, mangapill_mangas) = tokio::join!(
-                async {
-                    if let Some(ref client) = allanime {
-                        client.search_mangas(&query, translation).await.unwrap_or_default()
-                    } else {
-                        Vec::new()
-                    }
-                },
+            let (mangadex_mangas, mangapill_mangas) = tokio::join!(
                 async {
                     if let Some(ref client) = mangadex {
                         client.search_mangas(&query, translation).await.unwrap_or_default()
@@ -158,9 +120,6 @@ pub async fn run_manga_flow(
             );
 
             let mut combined = Vec::new();
-            for manga in allanime_mangas {
-                combined.push((Provider::Allanime, manga));
-            }
             for manga in mangadex_mangas {
                 combined.push((Provider::Mangadex, manga));
             }
@@ -178,22 +137,6 @@ pub async fn run_manga_flow(
             };
 
             match selected_provider {
-                Provider::Allanime => {
-                    let client = allanime.expect("AllAnime client must exist if selected");
-                    read_manga(
-                        &client,
-                        translation,
-                        manga,
-                        history,
-                        history_path,
-                        cli.episode.clone(),
-                        auto_play_next,
-                        cli.cache_dir.as_deref(),
-                        Provider::Allanime,
-                        config,
-                    )
-                    .await
-                }
                 Provider::Mangadex => {
                     let client = mangadex.expect("MangaDex client must exist if selected");
                     read_manga(

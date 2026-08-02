@@ -6,7 +6,7 @@ use crate::cmd::anime::play_show;
 use crate::config::AppConfig;
 use crate::history::{History, theme};
 use crate::providers::{
-    AnimeProvider, allanime::AllAnimeClient, anineko::AninekoClient, senshi::SenshiClient,
+    AnimeProvider, anidb::AnidbClient, anineko::AninekoClient, senshi::SenshiClient,
 };
 use crate::sync::mal::{MalClient, MalToken, MalWatchlistEntry};
 use crate::types::{EpisodeCounts, Provider, ShowInfo, Translation};
@@ -29,7 +29,7 @@ pub async fn run_mal_list(
 ) -> Result<()> {
     if !provider.is_anime() {
         bail!(
-            "Provider '{}' does not support anime. Valid anime providers: all, allanime, anineko, senshi",
+            "Provider '{}' does not support anime. Valid anime providers: all, anidb, anineko, senshi",
             provider.display_name()
         );
     }
@@ -45,7 +45,7 @@ pub async fn run_mal_list(
         return Ok(());
     }
 
-    let allanime = AllAnimeClient::new(config.prefer_english_titles, Some(&config.api_proxy))?;
+    let anidb = AnidbClient::new()?;
     let theme = theme();
 
     let skip_opts = SkipOptions {
@@ -274,7 +274,7 @@ pub async fn run_mal_list(
             .await;
         }
 
-        let cached_allanime_id = mal_client.cached_id(entry.mal_id, Provider::Allanime);
+        let cached_anidb_id = mal_client.cached_id(entry.mal_id, Provider::Anidb);
         let cached_anineko_id = mal_client.cached_id(entry.mal_id, Provider::Anineko);
 
         if provider == Provider::Anineko {
@@ -305,7 +305,7 @@ pub async fn run_mal_list(
                 .await;
             }
         } else if provider == Provider::All {
-            if cached_allanime_id.is_none() {
+            if cached_anidb_id.is_none() {
                 if let Some(anineko_id) = cached_anineko_id {
                     let show = ShowInfo {
                         id: anineko_id,
@@ -335,24 +335,24 @@ pub async fn run_mal_list(
             }
         }
 
-        let (allanime_id, mal_id) = if let Some(id) = cached_allanime_id {
+        let (anidb_id, mal_id) = if let Some(id) = cached_anidb_id {
             (id, Some(entry.mal_id.to_string()))
         } else {
-            println!("Searching AllAnime for \"{}\"...", entry.title);
-            let results = allanime.search_shows(&entry.title, translation).await?;
+            println!("Searching AniDB for \"{}\"...", entry.title);
+            let results = anidb.search_shows(&entry.title, translation).await?;
 
             if let Some(matched) = results
                 .iter()
                 .find(|s| s.mal_id.as_deref() == Some(&entry.mal_id.to_string()))
             {
-                mal_client.cache_id(&matched.id, entry.mal_id, Provider::Allanime);
+                mal_client.cache_id(&matched.id, entry.mal_id, Provider::Anidb);
                 (matched.id.clone(), matched.mal_id.clone())
             } else {
                 match results.len() {
                     0 => {
                         if provider == Provider::All {
                             if let Ok(anineko_client) = AninekoClient::new() {
-                                println!("No results on AllAnime. Trying AniNeko fallback...");
+                                println!("No results on AniDB. Trying AniNeko fallback...");
                                 if let Ok(retry) =
                                     anineko_client.search_shows(&entry.title, translation).await
                                 {
@@ -405,7 +405,7 @@ pub async fn run_mal_list(
                             }
                         }
                         println!(
-                            "No AllAnime results for \"{}\". Try a different search query (or Esc to go back).",
+                            "No AniDB results for \"{}\". Try a different search query (or Esc to go back).",
                             entry.title
                         );
                         let query: String = dialoguer::Input::with_theme(&theme)
@@ -415,7 +415,7 @@ pub async fn run_mal_list(
                         if query.trim().is_empty() {
                             continue;
                         }
-                        let retry = allanime.search_shows(query.trim(), translation).await?;
+                        let retry = anidb.search_shows(query.trim(), translation).await?;
                         if retry.is_empty() {
                             println!("Still no results. Going back to watchlist.");
                             continue;
@@ -426,7 +426,7 @@ pub async fn run_mal_list(
                             .collect();
                         let pick = dialoguer::Select::with_theme(&theme)
                             .with_prompt(format!(
-                                "Which AllAnime entry matches \"{}\"? (Esc = back)",
+                                "Which AniDB entry matches \"{}\"? (Esc = back)",
                                 entry.title
                             ))
                             .items(&opts)
@@ -434,7 +434,7 @@ pub async fn run_mal_list(
                             .interact_opt()?;
                         let Some(i) = pick else { continue };
                         let chosen = &retry[i];
-                        mal_client.cache_id(&chosen.id, entry.mal_id, Provider::Allanime);
+                        mal_client.cache_id(&chosen.id, entry.mal_id, Provider::Anidb);
                         (chosen.id.clone(), chosen.mal_id.clone())
                     }
                     _ => {
@@ -444,7 +444,7 @@ pub async fn run_mal_list(
                             .collect();
                         let pick = dialoguer::Select::with_theme(&theme)
                             .with_prompt(format!(
-                                "Which AllAnime entry matches \"{}\"? (Esc = back)",
+                                "Which AniDB entry matches \"{}\"? (Esc = back)",
                                 entry.title
                             ))
                             .items(&opts)
@@ -454,7 +454,7 @@ pub async fn run_mal_list(
                             continue;
                         };
                         let chosen = &results[i];
-                        mal_client.cache_id(&chosen.id, entry.mal_id, Provider::Allanime);
+                        mal_client.cache_id(&chosen.id, entry.mal_id, Provider::Anidb);
                         (chosen.id.clone(), chosen.mal_id.clone())
                     }
                 }
@@ -462,7 +462,7 @@ pub async fn run_mal_list(
         };
 
         let show = ShowInfo {
-            id: allanime_id,
+            id: anidb_id,
             title: entry.title.clone(),
             mal_id,
             available_eps: EpisodeCounts::default(),
@@ -475,11 +475,11 @@ pub async fn run_mal_list(
         };
 
         return play_show(
-            &allanime,
+            &anidb,
             history,
             history_path,
             translation,
-            Provider::Allanime,
+            Provider::Anidb,
             show,
             episode.clone(),
             entry.num_episodes_watched.map(|n| n.to_string()),

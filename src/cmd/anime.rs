@@ -11,7 +11,7 @@ use crate::config::AppConfig;
 use crate::history::{History, HistoryEntry, theme};
 use crate::player::{choose_stream, launch_player};
 use crate::providers::{
-    AnimeProvider, MangaProvider, allanime::AllAnimeClient, anineko::AninekoClient,
+    AnimeProvider, MangaProvider, anidb::AnidbClient, anineko::AninekoClient,
     mangadex::MangaDexClient, mangapill::MangapillClient, senshi::SenshiClient,
 };
 use crate::sync::SyncProvider;
@@ -48,40 +48,8 @@ pub async fn run_anime_flow<P: SyncProvider>(
 
             if entry.is_manga {
                 match target_provider {
-                    Provider::All | Provider::Allanime => {
-                        let client = AllAnimeClient::new(
-                            config.prefer_english_titles,
-                            Some(&config.api_proxy),
-                        )?;
-                        let manga_info = if target_provider == entry.provider
-                            || entry.provider == Provider::All
-                        {
-                            MangaInfo {
-                                id: entry.show_id.clone(),
-                                title: entry.show_title.clone(),
-                                available_chapters: ChapterCounts::default(),
-                            }
-                        } else {
-                            resolve_manga_info(&client, &entry.show_title, entry.translation)
-                                .await?
-                        };
-                        read_manga(
-                            &client,
-                            entry.translation,
-                            manga_info,
-                            history,
-                            history_path,
-                            if auto_play_next {
-                                None
-                            } else {
-                                Some(entry.episode.clone())
-                            },
-                            auto_play_next,
-                            cli.cache_dir.as_deref(),
-                            Provider::Allanime,
-                            config,
-                        )
-                        .await?;
+                    Provider::Anidb => {
+                        bail!("Provider 'AniDB' does not support manga.");
                     }
                     Provider::Anineko => {
                         bail!("Provider 'AniNeko' does not support manga.");
@@ -89,9 +57,10 @@ pub async fn run_anime_flow<P: SyncProvider>(
                     Provider::Senshi => {
                         bail!("Provider 'Senshi' does not support manga.");
                     }
-                    Provider::Mangadex => {
+                    Provider::All | Provider::Mangadex => {
                         let client = MangaDexClient::new()?;
-                        let manga_info = if target_provider == entry.provider {
+                        let manga_info = if target_provider == entry.provider
+                            || entry.provider == Provider::All {
                             MangaInfo {
                                 id: entry.show_id.clone(),
                                 title: entry.show_title.clone(),
@@ -228,11 +197,8 @@ pub async fn run_anime_flow<P: SyncProvider>(
                         )
                         .await?;
                     }
-                    Provider::Allanime | Provider::All => {
-                        let client = AllAnimeClient::new(
-                            config.prefer_english_titles,
-                            Some(&config.api_proxy),
-                        )?;
+                    Provider::Anidb | Provider::All => {
+                        let client = AnidbClient::new()?;
                         let fallback = AninekoClient::new().ok();
                         let show_info = if target_provider == entry.provider
                             || entry.provider == Provider::All
@@ -251,7 +217,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             history,
                             history_path,
                             entry.translation,
-                            Provider::Allanime,
+                            Provider::Anidb,
                             show_info,
                             if auto_play_next {
                                 None
@@ -357,13 +323,12 @@ pub async fn run_anime_flow<P: SyncProvider>(
             )
             .await
         }
-        Provider::Allanime => {
-            let client =
-                AllAnimeClient::new(config.prefer_english_titles, Some(&config.api_proxy))?;
+        Provider::Anidb => {
+            let client = AnidbClient::new()?;
             let shows = client.search_shows(&query, translation).await?;
             if shows.is_empty() {
                 bail!(
-                    "No results for \"{}\" ({}) on AllAnime",
+                    "No results for \"{}\" ({}) on AniDB",
                     query,
                     translation.label()
                 );
@@ -377,7 +342,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
                 history,
                 history_path,
                 translation,
-                Provider::Allanime,
+                Provider::Anidb,
                 show,
                 cli.episode.clone(),
                 None,
@@ -391,16 +356,15 @@ pub async fn run_anime_flow<P: SyncProvider>(
             .await
         }
         Provider::All => {
-            let allanime_client =
-                AllAnimeClient::new(config.prefer_english_titles, Some(&config.api_proxy)).ok();
+            let anidb_client = AnidbClient::new().ok();
             let anineko_client = AninekoClient::new().ok();
             let senshi_client = SenshiClient::new().ok();
 
             println!("Searching across all anime providers for \"{}\"...", query);
 
-            let (allanime_shows, anineko_shows, senshi_shows) = tokio::join!(
+            let (anidb_shows, anineko_shows, senshi_shows) = tokio::join!(
                 async {
-                    if let Some(ref client) = allanime_client {
+                    if let Some(ref client) = anidb_client {
                         client.search_shows(&query, translation).await.unwrap_or_default()
                     } else {
                         Vec::new()
@@ -423,8 +387,8 @@ pub async fn run_anime_flow<P: SyncProvider>(
             );
 
             let mut combined = Vec::new();
-            for show in allanime_shows {
-                combined.push((Provider::Allanime, show));
+            for show in anidb_shows {
+                combined.push((Provider::Anidb, show));
             }
             for show in anineko_shows {
                 combined.push((Provider::Anineko, show));
@@ -443,15 +407,15 @@ pub async fn run_anime_flow<P: SyncProvider>(
             };
 
             match selected_provider {
-                Provider::Allanime => {
-                    let client = allanime_client
-                        .expect("AllAnime client must be present if item was selected");
+                Provider::Anidb => {
+                    let client = anidb_client
+                        .expect("AniDB client must be present if item was selected");
                     play_show(
                         &client,
                         history,
                         history_path,
                         translation,
-                        Provider::Allanime,
+                        Provider::Anidb,
                         show,
                         cli.episode.clone(),
                         None,

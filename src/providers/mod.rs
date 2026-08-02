@@ -1,7 +1,7 @@
 use crate::types::{Chapter, MangaInfo, Page, ShowInfo, StreamOption, Translation};
 use anyhow::Result;
 
-pub mod allanime;
+pub mod anidb;
 pub mod anineko;
 pub mod mangadex;
 pub mod mangapill;

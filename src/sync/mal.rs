@@ -74,10 +74,20 @@ use crate::types::Provider;
 
 /// Persistent cache that maps provider show IDs to MAL anime IDs.
 /// The confirmation dialog is shown only for IDs not yet in this cache.
+///
+/// Field routing:
+/// - `anidb_entries`   — AniDB slug IDs (e.g. "gate-1759")
+/// - `anineko_entries` — AniNeko show IDs
+/// - `entries`         — legacy field from the AllAnime era; never written
+///                       (`skip_serializing`) so it drains away on next save.
+/// Senshi uses MAL IDs directly as show IDs, so it needs no cache bucket.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct MalIdCache {
-    #[serde(default)]
+    /// Legacy AllAnime-era bucket — read-only for migration, never written back.
+    #[serde(default, skip_serializing)]
     entries: HashMap<String, u32>,
+    #[serde(default)]
+    anidb_entries: HashMap<String, u32>,
     #[serde(default)]
     anineko_entries: HashMap<String, u32>,
 }
@@ -101,8 +111,10 @@ impl MalIdCache {
 
     pub fn get(&self, show_id: &str, provider: Provider) -> Option<u32> {
         match provider {
+            Provider::Anidb => self.anidb_entries.get(show_id).copied(),
             Provider::Anineko => self.anineko_entries.get(show_id).copied(),
-            _ => self.entries.get(show_id).copied(),
+            // Senshi uses MAL IDs as show IDs natively — no cache lookup needed.
+            _ => None,
         }
     }
 
@@ -110,8 +122,9 @@ impl MalIdCache {
     /// was previously cached
     pub fn get_cached_id(&self, mal_id: u32, provider: Provider) -> Option<String> {
         let map = match provider {
+            Provider::Anidb => &self.anidb_entries,
             Provider::Anineko => &self.anineko_entries,
-            _ => &self.entries,
+            _ => return None,
         };
         map.iter()
             .find(|(_, v)| **v == mal_id)
@@ -120,12 +133,14 @@ impl MalIdCache {
 
     pub fn insert_and_save(&mut self, show_id: &str, mal_id: u32, provider: Provider) -> Result<()> {
         match provider {
+            Provider::Anidb => {
+                self.anidb_entries.insert(show_id.to_string(), mal_id);
+            }
             Provider::Anineko => {
                 self.anineko_entries.insert(show_id.to_string(), mal_id);
             }
-            _ => {
-                self.entries.insert(show_id.to_string(), mal_id);
-            }
+            // Senshi uses MAL IDs as show IDs — nothing to cache.
+            _ => {}
         }
         let path = Self::cache_path()?;
         if let Some(parent) = path.parent() {
@@ -226,7 +241,7 @@ pub struct MalClient {
     client_id: String,
     http: Client,
     pub token: MalToken,
-    /// Persistent cache mapping AllAnime show IDs → MAL anime IDs.
+    /// Persistent cache mapping AniDB show IDs → MAL anime IDs.
     /// Loaded once when the client is constructed; saved on every new mapping.
     id_cache: std::sync::Mutex<MalIdCache>,
     /// Show IDs the user has declined to sync during this session.

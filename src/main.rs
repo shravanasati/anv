@@ -361,7 +361,7 @@ async fn run() -> Result<()> {
 
     if !cli.provider.is_anime() {
         anyhow::bail!(
-            "Provider '{}' does not support anime. Valid anime providers: all, allanime, anineko, senshi",
+            "Provider '{}' does not support anime. Valid anime providers: all, anidb, anineko, senshi",
             cli.provider.display_name()
         );
     }

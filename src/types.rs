@@ -99,7 +99,8 @@ pub struct Page {
 pub enum Provider {
     #[default]
     All,
-    Allanime,
+    #[serde(alias = "allanime")]
+    Anidb,
     Anineko,
     Mangadex,
     Mangapill,
@@ -110,25 +111,36 @@ impl Provider {
     pub fn is_anime(self) -> bool {
         matches!(
             self,
-            Provider::All | Provider::Allanime | Provider::Anineko | Provider::Senshi
+            Provider::All | Provider::Anidb | Provider::Anineko | Provider::Senshi
         )
     }
 
     pub fn is_manga(self) -> bool {
         matches!(
             self,
-            Provider::All | Provider::Allanime | Provider::Mangadex | Provider::Mangapill
+            Provider::All | Provider::Mangadex | Provider::Mangapill
         )
     }
 
     pub fn display_name(self) -> &'static str {
         match self {
             Provider::All => "All Providers",
-            Provider::Allanime => "AllAnime",
+            Provider::Anidb => "AniDB",
             Provider::Anineko => "AniNeko",
             Provider::Mangadex => "MangaDex",
             Provider::Mangapill => "Mangapill",
             Provider::Senshi => "Senshi",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_allanime_deserialization_alias() {
+        let p: Provider = serde_json::from_str("\"allanime\"").unwrap();
+        assert_eq!(p, Provider::Anidb);
     }
 }
