@@ -21,12 +21,6 @@ pub struct AppConfig {
     #[serde(default)]
     pub prefer_english_titles: bool,
 
-    /// Optional URL of a relay/proxy server for AllAnime API calls.
-    /// When set, GraphQL requests are routed through this URL to bypass
-    /// Cloudflare geo-blocking.  Video streams are still fetched directly.
-    /// Example: "https://my-relay.my-worker.workers.dev"
-    #[serde(default)]
-    pub api_proxy: String,
 
     #[serde(default)]
     pub mal: MalConfig,
@@ -128,13 +122,6 @@ const CONFIG_HEADER: &str = "# anv configuration
 #                         title in search results, watchlists, and watching menus
 #                         (default: false)
 #
-# api_proxy -- URL of a relay server to proxy AllAnime API calls through.
-#             Use this if you get NEED_CAPTCHA errors due to Cloudflare
-#             geo-blocking in your region. Only API requests are proxied;
-#             video streams are fetched directly for best performance.
-#             Example: \"https://my-relay.my-worker.workers.dev\"
-#             (default: \"\" -- disabled)
-#
 # [mal]
 #   client_id -- your MAL API client ID
 #               register at https://myanimelist.net/apiconfig
@@ -177,7 +164,6 @@ impl Default for AppConfig {
             binge: false,
             auto_play_next: false,
             prefer_english_titles: false,
-            api_proxy: String::new(),
             mal: MalConfig::default(),
             sync: SyncConfig::default(),
             aniskip: AniskipConfig::default(),

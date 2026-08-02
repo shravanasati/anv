@@ -52,6 +52,11 @@ Search and stream:
 anv "bocchi the rock"
 ```
 
+Specify a provider (e.g. `anidb`, `anineko`, `senshi`, `mangadex`, `mangapill`):
+```bash
+anv -p anidb "bocchi the rock"
+```
+
 Prefer the dub:
 ```bash
 anv --dub "demon slayer"
@@ -139,11 +144,6 @@ binge = false
 #                  instead of the last watched episode in history/watchlist
 auto_play_next = false
 
-# api_proxy — URL of a relay server to proxy AllAnime API calls through.
-#             Use this if you get NEED_CAPTCHA errors (see Troubleshooting).
-#             Only API requests are proxied; video streams are fetched directly.
-api_proxy = ""
-
 [mal]
 # client_id — your MAL API client ID
 #               register at https://myanimelist.net/apiconfig
@@ -161,6 +161,13 @@ enabled = false
 # skip_recap    — skip recap (default: false)
 skip_op = true
 skip_ed = true
+
+[anidb]
+# quality       — stream quality selection strategy ("select", "highest", "lowest")
+#                 "select"  — prompt to choose from available resolutions (default)
+#                 "highest" — automatically select highest available resolution
+#                 "lowest"  — automatically select lowest available resolution
+quality = "select"
 ```
 
 ## MAL sync
@@ -256,21 +263,21 @@ After each episode finishes playing:
 ## Tips and tweaks
 - Keep `mpv` upgraded – some providers only serve DASH/HLS variants that older builds struggle with.
 - If you want to experiment with custom players, set `player` in `~/.config/anv/config.toml` or use the `ANV_PLAYER` environment variable (env overrides config).
+- Use `-p <PROVIDER>` or `--provider <PROVIDER>` to specify a content provider (`anidb`, `anineko`, `senshi`, `mangadex`, `mangapill`).
 - Use `--cache-dir <DIR>` if you want manga page cache files somewhere specific (faster disk, larger partition, etc.).
 - Use `-e <EP>` to skip the interactive episode selector and start playing a specific episode immediately.
 - Use `-n` or `--next-episode` to automatically resume from the next episode based on your history or MAL status.
 - Set `auto_play_next = true` in your config to make `-n` the default behavior.
-- Run `anv-update` to pull the latest release whenever streams break or a new AllAnime quirk surfaces.
+- Run `anv-update` to pull the latest release whenever streams break or a new provider quirk surfaces.
 - Run `anv sync status` to quickly check if your MAL token is still valid before a long watch session.
-- `anv watching` and `anv watchlist` are the fastest paths from "what should I watch?" to actually watching it — the MAL→AllAnime mapping is cached after the first run, so subsequent launches are instant.
+- `anv watching` and `anv watchlist` are the fastest paths from "what should I watch?" to actually watching it — the MAL mapping is cached after the first run, so subsequent launches are instant.
 
 ## Troubleshooting
 
 > **First step for any breakage:** run `anv-update` to make sure you are on the latest release before raising an issue. Most provider and stream failures are already fixed in the newest version.
 
 - `mpv` not found: install it or set `player` in your config (or `ANV_PLAYER` env var).
-- `NEED_CAPTCHA` errors: AllAnime's API is geo-blocked in some regions (e.g. India) via Cloudflare. Deploy the lightweight API relay from [`relay/`](relay/) and set `api_proxy` in your config — only the small API calls are proxied, video streams stay direct. See the [relay README](relay/README.md) for setup instructions.
-- Streams empty: AllAnime occasionally throttles or shuffles providers; run `anv-update`, then try again.
+- Streams empty: providers occasionally throttle or shuffle streams; run `anv-update`, then try again.
 - History file corrupted: delete the JSON under your data dir and anv recreates it on launch.
 - MAL sync not working: run `anv sync status` to check token state, then `anv sync enable mal` to re-authenticate if needed.
 
