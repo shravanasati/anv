@@ -21,7 +21,6 @@ pub struct AppConfig {
     #[serde(default)]
     pub prefer_english_titles: bool,
 
-
     #[serde(default)]
     pub mal: MalConfig,
 
@@ -287,4 +286,25 @@ fn merge_missing(target: &mut toml::Table, defaults: &toml::Table) -> bool {
         }
     }
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_backwards_compatibility_with_unknown_fields() {
+        let legacy_toml = r#"
+player = "mpv"
+binge = true
+api_proxy = "https://my-relay.workers.dev"
+
+[aniskip]
+skip_op = true
+"#;
+        let config: AppConfig = toml::from_str(legacy_toml)
+            .expect("Should deserialize despite unknown api_proxy field");
+        assert_eq!(config.player, "mpv");
+        assert!(config.binge);
+    }
 }

@@ -46,7 +46,10 @@ impl SenshiClient {
             req = req.json(body);
         }
 
-        let resp = req.send().await.with_context(|| format!("Senshi request to {url} failed"))?;
+        let resp = req
+            .send()
+            .await
+            .with_context(|| format!("Senshi request to {url} failed"))?;
         let status = resp.status();
         if !status.is_success() {
             if debug {
@@ -55,9 +58,20 @@ impl SenshiClient {
             bail!("Senshi request to {url} failed with status {status}");
         }
 
-        let raw_text = resp.text().await.with_context(|| format!("failed to read Senshi response from {url}"))?;
+        let raw_text = resp
+            .text()
+            .await
+            .with_context(|| format!("failed to read Senshi response from {url}"))?;
         if debug {
-            eprintln!("[ANV_DEBUG] Senshi response from {url} (len={}): {}", raw_text.len(), if raw_text.len() > 500 { &raw_text[..500] } else { &raw_text });
+            eprintln!(
+                "[ANV_DEBUG] Senshi response from {url} (len={}): {}",
+                raw_text.len(),
+                if raw_text.len() > 500 {
+                    &raw_text[..500]
+                } else {
+                    &raw_text
+                }
+            );
         }
 
         let data = serde_json::from_str::<T>(&raw_text)
@@ -211,7 +225,10 @@ impl AnimeProvider for SenshiClient {
             .await?;
 
         if debug {
-            eprintln!("[ANV_DEBUG] Senshi search_shows results count: {}", resp.data.len());
+            eprintln!(
+                "[ANV_DEBUG] Senshi search_shows results count: {}",
+                resp.data.len()
+            );
         }
 
         if resp.data.is_empty() {
@@ -235,7 +252,10 @@ impl AnimeProvider for SenshiClient {
             let ep_count = parse_episode_count(&item.ani_episodes).unwrap_or(0);
 
             if debug {
-                eprintln!("[ANV_DEBUG]   show id={} title='{}' ep_count={ep_count}", item.id, title);
+                eprintln!(
+                    "[ANV_DEBUG]   show id={} title='{}' ep_count={ep_count}",
+                    item.id, title
+                );
             }
 
             shows.push(ShowInfo {
@@ -256,14 +276,21 @@ impl AnimeProvider for SenshiClient {
         Ok(shows)
     }
 
-    async fn fetch_episodes(&self, show_id: &str, _translation: Translation) -> Result<Vec<String>> {
+    async fn fetch_episodes(
+        &self,
+        show_id: &str,
+        _translation: Translation,
+    ) -> Result<Vec<String>> {
         let debug = std::env::var("ANV_DEBUG").is_ok();
         let mal_id = parse_mal_id(show_id)?;
         let url = format!("{}/episodes/{}", BASE_URL, mal_id);
         let episodes: Vec<EpisodeItem> = self.fetch_json(reqwest::Method::GET, &url, None).await?;
 
         if debug {
-            eprintln!("[ANV_DEBUG] Senshi fetch_episodes mal_id={mal_id} count={}", episodes.len());
+            eprintln!(
+                "[ANV_DEBUG] Senshi fetch_episodes mal_id={mal_id} count={}",
+                episodes.len()
+            );
         }
 
         if episodes.is_empty() {
@@ -306,9 +333,16 @@ impl AnimeProvider for SenshiClient {
         let embeds: Vec<EmbedItem> = self.fetch_json(reqwest::Method::GET, &url, None).await?;
 
         if debug {
-            eprintln!("[ANV_DEBUG] Senshi fetch_streams mal_id={mal_id} ep_no={ep_no} translation={} embeds_count={}", translation.as_str(), embeds.len());
+            eprintln!(
+                "[ANV_DEBUG] Senshi fetch_streams mal_id={mal_id} ep_no={ep_no} translation={} embeds_count={}",
+                translation.as_str(),
+                embeds.len()
+            );
             for (i, item) in embeds.iter().enumerate() {
-                eprintln!("[ANV_DEBUG]   embed[{i}] status='{}' url='{}' serverFM={:?} masked_base_url='{}'", item.status, item.url, item.server_fm, item.masked_base_url);
+                eprintln!(
+                    "[ANV_DEBUG]   embed[{i}] status='{}' url='{}' serverFM={:?} masked_base_url='{}'",
+                    item.status, item.url, item.server_fm, item.masked_base_url
+                );
             }
         }
 
@@ -325,7 +359,11 @@ impl AnimeProvider for SenshiClient {
 
             if !matches_status {
                 if debug {
-                    eprintln!("[ANV_DEBUG]   skipping embed status='{}' (wanted translation={})", item.status, translation.as_str());
+                    eprintln!(
+                        "[ANV_DEBUG]   skipping embed status='{}' (wanted translation={})",
+                        item.status,
+                        translation.as_str()
+                    );
                 }
                 continue;
             }
@@ -361,13 +399,23 @@ impl AnimeProvider for SenshiClient {
 
         if streams.is_empty() {
             if debug {
-                eprintln!("[ANV_DEBUG] Senshi fetch_streams: 0 streams matched status filter for translation {}", translation.as_str());
+                eprintln!(
+                    "[ANV_DEBUG] Senshi fetch_streams: 0 streams matched status filter for translation {}",
+                    translation.as_str()
+                );
             }
-            bail!("no {} streams found for episode {}", translation.as_str(), ep_no);
+            bail!(
+                "no {} streams found for episode {}",
+                translation.as_str(),
+                ep_no
+            );
         }
 
         if debug {
-            eprintln!("[ANV_DEBUG] Senshi returning {} stream option(s)", streams.len());
+            eprintln!(
+                "[ANV_DEBUG] Senshi returning {} stream option(s)",
+                streams.len()
+            );
         }
 
         Ok(streams)
@@ -381,7 +429,10 @@ impl AnimeProvider for SenshiClient {
 
 fn is_sub_embed_status(status: &str) -> bool {
     let s = status.trim().to_lowercase();
-    matches!(s.as_str(), "hardsub" | "softsub" | "sub" | "hard_sub" | "soft_sub" | "subtitled")
+    matches!(
+        s.as_str(),
+        "hardsub" | "softsub" | "sub" | "hard_sub" | "soft_sub" | "subtitled"
+    )
 }
 
 fn parse_mal_id(show_id: &str) -> Result<usize> {
@@ -427,11 +478,7 @@ fn subtitle_info_from_url(raw_url: &str) -> Option<String> {
         .find(|(k, _)| k == "sub.info")
         .map(|(_, v)| v.trim().to_string())?;
 
-    if val.is_empty() {
-        None
-    } else {
-        Some(val)
-    }
+    if val.is_empty() { None } else { Some(val) }
 }
 
 fn pick_senshi_subtitle_track(tracks: &[SenshiSubtitleTrack]) -> Option<String> {
@@ -521,7 +568,8 @@ mod tests {
 
     #[test]
     fn test_subtitle_info_from_url() {
-        let url = "https://filemoon.sx/e/12345?sub.info=https%3A%2F%2Fsenshi.live%2Fsubs%2F123.json";
+        let url =
+            "https://filemoon.sx/e/12345?sub.info=https%3A%2F%2Fsenshi.live%2Fsubs%2F123.json";
         assert_eq!(
             subtitle_info_from_url(url),
             Some("https://senshi.live/subs/123.json".to_string())

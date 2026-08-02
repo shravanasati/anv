@@ -382,7 +382,11 @@ pub async fn run_mal_list(
                                         };
                                         let mut show = chosen;
                                         show.mal_id = Some(entry.mal_id.to_string());
-                                        mal_client.cache_id(&show.id, entry.mal_id, Provider::Anineko);
+                                        mal_client.cache_id(
+                                            &show.id,
+                                            entry.mal_id,
+                                            Provider::Anineko,
+                                        );
                                         return play_show(
                                             &anineko_client,
                                             history,

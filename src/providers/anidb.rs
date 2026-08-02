@@ -90,7 +90,10 @@ impl AnimeProvider for AnidbClient {
             .error_for_status()?
             .text()
             .await?;
-        dbg_log!("search_shows: suggestions response ({} bytes)", suggestions_response.len());
+        dbg_log!(
+            "search_shows: suggestions response ({} bytes)",
+            suggestions_response.len()
+        );
 
         // Matches <a href="https://anidb.app/anime/SLUG"> ... alt="TITLE" across newlines
         let re_suggestions = regex::Regex::new(
@@ -114,13 +117,18 @@ impl AnimeProvider for AnidbClient {
             }
         }
 
-        dbg_log!("search_shows: found {} results from suggestions endpoint", shows.len());
+        dbg_log!(
+            "search_shows: found {} results from suggestions endpoint",
+            shows.len()
+        );
 
         // Fallback: scrape the /browse page with updated patterns
         // (anidb.app now uses full absolute URLs + title= attribute instead of relative + alt=)
         if shows.is_empty() {
             let browse_url = format!("{ANIDB_BASE_URL}/browse");
-            dbg_log!("search_shows: suggestions empty, falling back to browse: GET {browse_url}?q={query}");
+            dbg_log!(
+                "search_shows: suggestions empty, falling back to browse: GET {browse_url}?q={query}"
+            );
             let browse_response = self
                 .client
                 .get(&browse_url)
@@ -130,7 +138,10 @@ impl AnimeProvider for AnidbClient {
                 .error_for_status()?
                 .text()
                 .await?;
-            dbg_log!("search_shows: browse response ({} bytes)", browse_response.len());
+            dbg_log!(
+                "search_shows: browse response ({} bytes)",
+                browse_response.len()
+            );
 
             // Full URL + title attribute (current browse page format)
             let re_browse_title = regex::Regex::new(
@@ -138,10 +149,9 @@ impl AnimeProvider for AnidbClient {
             )
             .unwrap();
             // Legacy: relative URL + alt attribute (old format, kept for resilience)
-            let re_browse_alt = regex::Regex::new(
-                r#"href="/anime/([a-z0-9-]+-[0-9]+)"[^>]*alt="([^"]+)""#,
-            )
-            .unwrap();
+            let re_browse_alt =
+                regex::Regex::new(r#"href="/anime/([a-z0-9-]+-[0-9]+)"[^>]*alt="([^"]+)""#)
+                    .unwrap();
 
             for cap in re_browse_title.captures_iter(&browse_response) {
                 let id = cap[1].to_string();
@@ -175,7 +185,11 @@ impl AnimeProvider for AnidbClient {
         Ok(shows)
     }
 
-    async fn fetch_episodes(&self, show_id: &str, _translation: Translation) -> Result<Vec<String>> {
+    async fn fetch_episodes(
+        &self,
+        show_id: &str,
+        _translation: Translation,
+    ) -> Result<Vec<String>> {
         let num_id = Self::extract_numeric_id(show_id)?;
         let url = format!("{ANIDB_BASE_URL}/api/frontend/anime/{num_id}/episodes");
         dbg_log!("fetch_episodes: GET {url}");
@@ -217,7 +231,10 @@ impl AnimeProvider for AnidbClient {
             .json()
             .await?;
         let eps = resp.episodes;
-        dbg_log!("fetch_streams: {} episode items, looking for ep={episode}", eps.len());
+        dbg_log!(
+            "fetch_streams: {} episode items, looking for ep={episode}",
+            eps.len()
+        );
 
         let ep_num = episode
             .parse::<usize>()
@@ -227,9 +244,16 @@ impl AnimeProvider for AnidbClient {
             .into_iter()
             .find(|e| e.number == ep_num)
             .ok_or_else(|| anyhow!("episode {episode} not found for show {show_id}"))?;
-        dbg_log!("fetch_streams: matched ep id={} number={}", target_ep.id, target_ep.number);
+        dbg_log!(
+            "fetch_streams: matched ep id={} number={}",
+            target_ep.id,
+            target_ep.number
+        );
 
-        let lang_url = format!("{ANIDB_BASE_URL}/api/frontend/episode/{}/languages", target_ep.id);
+        let lang_url = format!(
+            "{ANIDB_BASE_URL}/api/frontend/episode/{}/languages",
+            target_ep.id
+        );
         dbg_log!("fetch_streams: GET languages {lang_url}");
         let lang_resp: AnidbLanguagesResponse = self
             .client
@@ -241,7 +265,13 @@ impl AnimeProvider for AnidbClient {
             .await?;
         let langs = lang_resp.languages;
         dbg_log!("fetch_streams: {} language items available", langs.len());
-        dbg_log!("fetch_streams: language codes = {:?}", langs.iter().map(|l| l.code.as_deref().unwrap_or("?")).collect::<Vec<_>>());
+        dbg_log!(
+            "fetch_streams: language codes = {:?}",
+            langs
+                .iter()
+                .map(|l| l.code.as_deref().unwrap_or("?"))
+                .collect::<Vec<_>>()
+        );
 
         let target_lang = match translation {
             Translation::Dub => "eng",
@@ -279,7 +309,10 @@ impl AnimeProvider for AnidbClient {
                     .map(|c| c[1].to_string())
             })
             .ok_or_else(|| {
-                dbg_log!("fetch_streams: failed to find m3u8 in embed page. embed page snippet:\n{}", &embed_page[..embed_page.len().min(2000)]);
+                dbg_log!(
+                    "fetch_streams: failed to find m3u8 in embed page. embed page snippet:\n{}",
+                    &embed_page[..embed_page.len().min(2000)]
+                );
                 anyhow!("failed to extract m3u8 stream URL from embed page")
             })?;
         dbg_log!("fetch_streams: master m3u8={master_m3u8}");
@@ -313,7 +346,10 @@ impl AnimeProvider for AnidbClient {
                     let stream_rel = next_line.trim();
                     if !stream_rel.is_empty() && !stream_rel.starts_with('#') {
                         let full_url = match &base_url {
-                            Some(b) => b.join(stream_rel).map(|u| u.to_string()).unwrap_or_else(|_| stream_rel.to_string()),
+                            Some(b) => b
+                                .join(stream_rel)
+                                .map(|u| u.to_string())
+                                .unwrap_or_else(|_| stream_rel.to_string()),
                             None => stream_rel.to_string(),
                         };
 

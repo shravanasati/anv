@@ -132,7 +132,12 @@ impl MalIdCache {
             .map(|(k, _)| k.clone())
     }
 
-    pub fn insert_and_save(&mut self, show_id: &str, mal_id: u32, provider: Provider) -> Result<()> {
+    pub fn insert_and_save(
+        &mut self,
+        show_id: &str,
+        mal_id: u32,
+        provider: Provider,
+    ) -> Result<()> {
         match provider {
             Provider::Anidb => {
                 self.anidb_entries.insert(show_id.to_string(), mal_id);
@@ -649,8 +654,15 @@ impl MalClient {
 }
 
 impl SyncProvider for MalClient {
-    async fn sync_episode(&self, show_id: &str, show_title: &str, ep_num: u32, provider: Provider) -> Result<()> {
-        self.do_sync_episode(show_id, show_title, ep_num, provider).await
+    async fn sync_episode(
+        &self,
+        show_id: &str,
+        show_title: &str,
+        ep_num: u32,
+        provider: Provider,
+    ) -> Result<()> {
+        self.do_sync_episode(show_id, show_title, ep_num, provider)
+            .await
     }
 }
 
@@ -753,7 +765,10 @@ impl MalClient {
     }
 
     pub fn cached_id(&self, mal_id: u32, provider: Provider) -> Option<String> {
-        self.id_cache.lock().unwrap().get_cached_id(mal_id, provider)
+        self.id_cache
+            .lock()
+            .unwrap()
+            .get_cached_id(mal_id, provider)
     }
 
     pub fn cache_id(&self, show_id: &str, mal_id: u32, provider: Provider) {
@@ -771,7 +786,13 @@ impl MalClient {
     /// or via search + user confirmation), checks current remote state, skips
     /// if MAL already tracks at least this episode, prompts the user when the
     /// status is changing, and posts the patch request.
-    async fn do_sync_episode(&self, show_id: &str, show_title: &str, ep_num: u32, provider: Provider) -> Result<()> {
+    async fn do_sync_episode(
+        &self,
+        show_id: &str,
+        show_title: &str,
+        ep_num: u32,
+        provider: Provider,
+    ) -> Result<()> {
         // 1. Resolve MAL ID — check internal cache first.
         if self.skipped_ids.lock().unwrap().contains(show_id) {
             return Ok(()); // user already declined this show this session
@@ -782,7 +803,12 @@ impl MalClient {
         } else {
             match self.resolve_and_confirm_mal_id(show_title).await {
                 Ok(Some(id)) => {
-                    if let Err(err) = self.id_cache.lock().unwrap().insert_and_save(show_id, id, provider) {
+                    if let Err(err) = self
+                        .id_cache
+                        .lock()
+                        .unwrap()
+                        .insert_and_save(show_id, id, provider)
+                    {
                         eprintln!("[sync] Warning: could not save ID cache: {err}");
                     }
                     id

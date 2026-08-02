@@ -8,9 +8,7 @@ use crate::cache::{MangaCacheState, cache_manga_pages};
 use crate::config::AppConfig;
 use crate::history::{History, HistoryEntry, theme};
 use crate::player::launch_image_viewer;
-use crate::providers::{
-    MangaProvider, mangadex::MangaDexClient, mangapill::MangapillClient,
-};
+use crate::providers::{MangaProvider, mangadex::MangaDexClient, mangapill::MangapillClient};
 use crate::types::{MangaInfo, Provider, Translation};
 use crate::utils::{next_episode_label_presorted, sorted_episode_labels};
 
@@ -105,14 +103,20 @@ pub async fn run_manga_flow(
             let (mangadex_mangas, mangapill_mangas) = tokio::join!(
                 async {
                     if let Some(ref client) = mangadex {
-                        client.search_mangas(&query, translation).await.unwrap_or_default()
+                        client
+                            .search_mangas(&query, translation)
+                            .await
+                            .unwrap_or_default()
                     } else {
                         Vec::new()
                     }
                 },
                 async {
                     if let Some(ref client) = mangapill {
-                        client.search_mangas(&query, translation).await.unwrap_or_default()
+                        client
+                            .search_mangas(&query, translation)
+                            .await
+                            .unwrap_or_default()
                     } else {
                         Vec::new()
                     }
@@ -217,7 +221,12 @@ fn select_manga_with_provider(
                 Translation::Dub => 0,
             };
             if count > 0 {
-                format!("{} [{}] [{} chapters]", m.title, provider.display_name(), count)
+                format!(
+                    "{} [{}] [{} chapters]",
+                    m.title,
+                    provider.display_name(),
+                    count
+                )
             } else {
                 format!("{} [{}]", m.title, provider.display_name())
             }

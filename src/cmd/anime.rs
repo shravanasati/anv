@@ -60,7 +60,8 @@ pub async fn run_anime_flow<P: SyncProvider>(
                     Provider::All | Provider::Mangadex => {
                         let client = MangaDexClient::new()?;
                         let manga_info = if target_provider == entry.provider
-                            || entry.provider == Provider::All {
+                            || entry.provider == Provider::All
+                        {
                             MangaInfo {
                                 id: entry.show_id.clone(),
                                 title: entry.show_title.clone(),
@@ -365,21 +366,30 @@ pub async fn run_anime_flow<P: SyncProvider>(
             let (anidb_shows, anineko_shows, senshi_shows) = tokio::join!(
                 async {
                     if let Some(ref client) = anidb_client {
-                        client.search_shows(&query, translation).await.unwrap_or_default()
+                        client
+                            .search_shows(&query, translation)
+                            .await
+                            .unwrap_or_default()
                     } else {
                         Vec::new()
                     }
                 },
                 async {
                     if let Some(ref client) = anineko_client {
-                        client.search_shows(&query, translation).await.unwrap_or_default()
+                        client
+                            .search_shows(&query, translation)
+                            .await
+                            .unwrap_or_default()
                     } else {
                         Vec::new()
                     }
                 },
                 async {
                     if let Some(ref client) = senshi_client {
-                        client.search_shows(&query, translation).await.unwrap_or_default()
+                        client
+                            .search_shows(&query, translation)
+                            .await
+                            .unwrap_or_default()
                     } else {
                         Vec::new()
                     }
@@ -408,8 +418,8 @@ pub async fn run_anime_flow<P: SyncProvider>(
 
             match selected_provider {
                 Provider::Anidb => {
-                    let client = anidb_client
-                        .expect("AniDB client must be present if item was selected");
+                    let client =
+                        anidb_client.expect("AniDB client must be present if item was selected");
                     play_show(
                         &client,
                         history,
@@ -524,7 +534,12 @@ fn select_show_with_provider(
                 Translation::Raw => 0,
             };
             if count > 0 {
-                format!("{} [{}] [{} episodes]", s.title, provider.display_name(), count)
+                format!(
+                    "{} [{}] [{} episodes]",
+                    s.title,
+                    provider.display_name(),
+                    count
+                )
             } else {
                 format!("{} [{}]", s.title, provider.display_name())
             }
@@ -736,7 +751,10 @@ pub async fn play_show<P: SyncProvider>(
 
         if let Some(provider) = sync_provider {
             let ep_num = chosen.parse::<u32>().unwrap_or(0);
-            if let Err(err) = provider.sync_episode(&show.id, &show.title, ep_num, active_provider).await {
+            if let Err(err) = provider
+                .sync_episode(&show.id, &show.title, ep_num, active_provider)
+                .await
+            {
                 eprintln!("[sync] error: {err}");
             }
         }

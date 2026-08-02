@@ -598,7 +598,8 @@ impl VibeProxy {
         {
             Ok(res) if res.status().is_success() => res.text().await?,
             _ => {
-                return write_http_response(stream, 502, "text/plain", b"Variant Fetch Error").await;
+                return write_http_response(stream, 502, "text/plain", b"Variant Fetch Error")
+                    .await;
             }
         };
 
@@ -668,7 +669,8 @@ impl VibeProxy {
         {
             Ok(res) if res.status().is_success() => res.bytes().await?,
             _ => {
-                return write_http_response(stream, 502, "text/plain", b"Segment Fetch Error").await;
+                return write_http_response(stream, 502, "text/plain", b"Segment Fetch Error")
+                    .await;
             }
         };
 
