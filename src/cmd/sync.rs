@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use std::path::Path;
 
 use crate::Cli;
-use crate::cmd::anime::play_show;
+use crate::cmd::anime::{play_show, select_show_with_provider};
 use crate::config::AppConfig;
 use crate::history::{History, theme};
 use crate::providers::{
@@ -45,7 +45,6 @@ pub async fn run_mal_list(
         return Ok(());
     }
 
-    let anidb = AnidbClient::new()?;
     let theme = theme();
 
     let skip_opts = SkipOptions {
@@ -97,222 +96,180 @@ pub async fn run_mal_list(
 
         let entry: &MalWatchlistEntry = &watchlist[idx];
 
-        if provider == Provider::Senshi {
-            let client = SenshiClient::new()?;
-            println!("Searching Senshi for \"{}\"...", entry.title);
-            let results = client.search_shows(&entry.title, translation).await?;
+        if provider == Provider::All {
+            let anidb_client = AnidbClient::new().ok();
+            let anineko_client = AninekoClient::new().ok();
+            let senshi_client = SenshiClient::new().ok();
 
-            let chosen_show = if let Some(matched) = results
-                .iter()
-                .find(|s| s.mal_id.as_deref() == Some(&entry.mal_id.to_string()))
-            {
-                matched.clone()
-            } else {
-                match results.len() {
-                    0 => {
-                        println!(
-                            "No Senshi results for \"{}\". Try a different search query (or Esc to go back).",
-                            entry.title
-                        );
-                        let query: String = dialoguer::Input::with_theme(&theme)
-                            .with_prompt("Search query")
-                            .allow_empty(true)
-                            .interact_text()?;
-                        if query.trim().is_empty() {
-                            continue;
+            let mut search_query = entry.title.clone();
+
+            loop {
+                println!(
+                    "Searching across all anime providers for \"{}\"...",
+                    search_query
+                );
+
+                let (anidb_shows, anineko_shows, senshi_shows) = tokio::join!(
+                    async {
+                        if let Some(ref client) = anidb_client {
+                            client
+                                .search_shows(&search_query, translation)
+                                .await
+                                .unwrap_or_default()
+                        } else {
+                            Vec::new()
                         }
-                        let retry = client.search_shows(query.trim(), translation).await?;
-                        if retry.is_empty() {
-                            println!("Still no results. Going back to watchlist.");
-                            continue;
+                    },
+                    async {
+                        if let Some(ref client) = anineko_client {
+                            client
+                                .search_shows(&search_query, translation)
+                                .await
+                                .unwrap_or_default()
+                        } else {
+                            Vec::new()
                         }
-                        let opts: Vec<String> = retry
-                            .iter()
-                            .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
-                            .collect();
-                        let pick = dialoguer::Select::with_theme(&theme)
-                            .with_prompt(format!(
-                                "Which Senshi entry matches \"{}\"? (Esc = back)",
-                                entry.title
-                            ))
-                            .items(&opts)
-                            .default(0)
-                            .interact_opt()?;
-                        let Some(i) = pick else { continue };
-                        retry[i].clone()
-                    }
-                    1 => results[0].clone(),
-                    _ => {
-                        let opts: Vec<String> = results
-                            .iter()
-                            .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
-                            .collect();
-                        let pick = dialoguer::Select::with_theme(&theme)
-                            .with_prompt(format!(
-                                "Which Senshi entry matches \"{}\"? (Esc = back)",
-                                entry.title
-                            ))
-                            .items(&opts)
-                            .default(0)
-                            .interact_opt()?;
-                        let Some(i) = pick else {
-                            continue;
-                        };
-                        results[i].clone()
-                    }
+                    },
+                    async {
+                        if let Some(ref client) = senshi_client {
+                            client
+                                .search_shows(&search_query, translation)
+                                .await
+                                .unwrap_or_default()
+                        } else {
+                            Vec::new()
+                        }
+                    },
+                );
+
+                let mut combined = Vec::new();
+                for show in anidb_shows {
+                    combined.push((Provider::Anidb, show));
                 }
-            };
-
-            let mut show = chosen_show;
-            show.mal_id = Some(entry.mal_id.to_string());
-
-            return play_show(
-                &client,
-                history,
-                history_path,
-                translation,
-                Provider::Senshi,
-                show,
-                episode.clone(),
-                entry.num_episodes_watched.map(|n| n.to_string()),
-                auto_play_next,
-                Some(mal_client),
-                binge,
-                config,
-                skip_opts,
-                None,
-            )
-            .await;
-        }
-
-        if provider == Provider::Anineko {
-            let client = AninekoClient::new()?;
-            println!("Searching AniNeko for \"{}\"...", entry.title);
-            let results = client.search_shows(&entry.title, translation).await?;
-
-            let chosen_show = if let Some(matched) = results
-                .iter()
-                .find(|s| s.mal_id.as_deref() == Some(&entry.mal_id.to_string()))
-            {
-                matched.clone()
-            } else {
-                match results.len() {
-                    0 => {
-                        println!(
-                            "No AniNeko results for \"{}\". Try a different search query (or Esc to go back).",
-                            entry.title
-                        );
-                        let query: String = dialoguer::Input::with_theme(&theme)
-                            .with_prompt("Search query")
-                            .allow_empty(true)
-                            .interact_text()?;
-                        if query.trim().is_empty() {
-                            continue;
-                        }
-                        let retry = client.search_shows(query.trim(), translation).await?;
-                        if retry.is_empty() {
-                            println!("Still no results. Going back to watchlist.");
-                            continue;
-                        }
-                        let opts: Vec<String> = retry
-                            .iter()
-                            .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
-                            .collect();
-                        let pick = dialoguer::Select::with_theme(&theme)
-                            .with_prompt(format!(
-                                "Which AniNeko entry matches \"{}\"? (Esc = back)",
-                                entry.title
-                            ))
-                            .items(&opts)
-                            .default(0)
-                            .interact_opt()?;
-                        let Some(i) = pick else { continue };
-                        retry[i].clone()
-                    }
-                    1 => results[0].clone(),
-                    _ => {
-                        let opts: Vec<String> = results
-                            .iter()
-                            .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
-                            .collect();
-                        let pick = dialoguer::Select::with_theme(&theme)
-                            .with_prompt(format!(
-                                "Which AniNeko entry matches \"{}\"? (Esc = back)",
-                                entry.title
-                            ))
-                            .items(&opts)
-                            .default(0)
-                            .interact_opt()?;
-                        let Some(i) = pick else {
-                            continue;
-                        };
-                        results[i].clone()
-                    }
+                for show in anineko_shows {
+                    combined.push((Provider::Anineko, show));
                 }
-            };
+                for show in senshi_shows {
+                    combined.push((Provider::Senshi, show));
+                }
 
-            let mut show = chosen_show;
-            show.mal_id = Some(entry.mal_id.to_string());
-            mal_client.cache_id(&show.id, entry.mal_id, Provider::Anineko);
+                if combined.is_empty() {
+                    println!(
+                        "No results for \"{}\" across all providers. Try a different search query (or Esc to go back).",
+                        search_query
+                    );
+                    let query: String = dialoguer::Input::with_theme(&theme)
+                        .with_prompt("Search query")
+                        .allow_empty(true)
+                        .interact_text()?;
+                    if query.trim().is_empty() {
+                        break;
+                    }
+                    search_query = query.trim().to_string();
+                    continue;
+                }
 
-            return play_show(
-                &client,
-                history,
-                history_path,
-                translation,
-                Provider::Anineko,
-                show,
-                episode.clone(),
-                entry.num_episodes_watched.map(|n| n.to_string()),
-                auto_play_next,
-                Some(mal_client),
-                binge,
-                config,
-                skip_opts,
-                None,
-            )
-            .await;
-        }
-
-        let cached_anidb_id = mal_client.cached_id(entry.mal_id, Provider::Anidb);
-        let cached_anineko_id = mal_client.cached_id(entry.mal_id, Provider::Anineko);
-
-        if provider == Provider::Anineko {
-            if let Some(anineko_id) = cached_anineko_id {
-                let show = ShowInfo {
-                    id: anineko_id,
-                    title: entry.title.clone(),
-                    mal_id: Some(entry.mal_id.to_string()),
-                    available_eps: EpisodeCounts::default(),
+                let selection = select_show_with_provider(&combined, translation, &theme)?;
+                let Some((selected_provider, mut show)) = selection else {
+                    break;
                 };
-                let client = AninekoClient::new()?;
-                return play_show(
-                    &client,
-                    history,
-                    history_path,
-                    translation,
-                    Provider::Anineko,
-                    show,
-                    episode.clone(),
-                    entry.num_episodes_watched.map(|n| n.to_string()),
-                    auto_play_next,
-                    Some(mal_client),
-                    binge,
-                    config,
-                    skip_opts,
-                    None,
-                )
-                .await;
+
+                show.mal_id = Some(entry.mal_id.to_string());
+                mal_client.cache_id(&show.id, entry.mal_id, selected_provider);
+
+                match selected_provider {
+                    Provider::Anidb => {
+                        let client = AnidbClient::new()?;
+                        return play_show(
+                            &client,
+                            history,
+                            history_path,
+                            translation,
+                            Provider::Anidb,
+                            show,
+                            episode.clone(),
+                            entry.num_episodes_watched.map(|n| n.to_string()),
+                            auto_play_next,
+                            Some(mal_client),
+                            binge,
+                            config,
+                            skip_opts,
+                        )
+                        .await;
+                    }
+                    Provider::Anineko => {
+                        let client = AninekoClient::new()?;
+                        return play_show(
+                            &client,
+                            history,
+                            history_path,
+                            translation,
+                            Provider::Anineko,
+                            show,
+                            episode.clone(),
+                            entry.num_episodes_watched.map(|n| n.to_string()),
+                            auto_play_next,
+                            Some(mal_client),
+                            binge,
+                            config,
+                            skip_opts,
+                        )
+                        .await;
+                    }
+                    Provider::Senshi => {
+                        let client = SenshiClient::new()?;
+                        return play_show(
+                            &client,
+                            history,
+                            history_path,
+                            translation,
+                            Provider::Senshi,
+                            show,
+                            episode.clone(),
+                            entry.num_episodes_watched.map(|n| n.to_string()),
+                            auto_play_next,
+                            Some(mal_client),
+                            binge,
+                            config,
+                            skip_opts,
+                        )
+                        .await;
+                    }
+                    _ => unreachable!(),
+                }
             }
-        } else if provider == Provider::All {
-            if cached_anidb_id.is_none() {
-                if let Some(anineko_id) = cached_anineko_id {
-                    let show = ShowInfo {
-                        id: anineko_id,
-                        title: entry.title.clone(),
-                        mal_id: Some(entry.mal_id.to_string()),
-                        available_eps: EpisodeCounts::default(),
-                    };
+            continue;
+        }
+
+        if let Some(cached_id) = mal_client.cached_id(entry.mal_id, provider) {
+            let show = ShowInfo {
+                id: cached_id,
+                title: entry.title.clone(),
+                mal_id: Some(entry.mal_id.to_string()),
+                available_eps: EpisodeCounts::default(),
+            };
+
+            match provider {
+                Provider::Anidb => {
+                    let client = AnidbClient::new()?;
+                    return play_show(
+                        &client,
+                        history,
+                        history_path,
+                        translation,
+                        Provider::Anidb,
+                        show,
+                        episode.clone(),
+                        entry.num_episodes_watched.map(|n| n.to_string()),
+                        auto_play_next,
+                        Some(mal_client),
+                        binge,
+                        config,
+                        skip_opts,
+                    )
+                    .await;
+                }
+                Provider::Anineko => {
                     let client = AninekoClient::new()?;
                     return play_show(
                         &client,
@@ -328,173 +285,182 @@ pub async fn run_mal_list(
                         binge,
                         config,
                         skip_opts,
-                        None,
                     )
                     .await;
                 }
+                Provider::Senshi => {
+                    let client = SenshiClient::new()?;
+                    return play_show(
+                        &client,
+                        history,
+                        history_path,
+                        translation,
+                        Provider::Senshi,
+                        show,
+                        episode.clone(),
+                        entry.num_episodes_watched.map(|n| n.to_string()),
+                        auto_play_next,
+                        Some(mal_client),
+                        binge,
+                        config,
+                        skip_opts,
+                    )
+                    .await;
+                }
+                _ => unreachable!(),
             }
         }
 
-        let (anidb_id, mal_id) = if let Some(id) = cached_anidb_id {
-            (id, Some(entry.mal_id.to_string()))
-        } else {
-            println!("Searching AniDB for \"{}\"...", entry.title);
-            let results = anidb.search_shows(&entry.title, translation).await?;
+        let mut search_query = entry.title.clone();
+        let mut chosen_show: Option<ShowInfo> = None;
+
+        loop {
+            println!(
+                "Searching {} for \"{}\"...",
+                provider.display_name(),
+                search_query
+            );
+            let results = match provider {
+                Provider::Anidb => {
+                    let client = AnidbClient::new()?;
+                    client.search_shows(&search_query, translation).await?
+                }
+                Provider::Anineko => {
+                    let client = AninekoClient::new()?;
+                    client.search_shows(&search_query, translation).await?
+                }
+                Provider::Senshi => {
+                    let client = SenshiClient::new()?;
+                    client.search_shows(&search_query, translation).await?
+                }
+                _ => unreachable!(),
+            };
 
             if let Some(matched) = results
                 .iter()
                 .find(|s| s.mal_id.as_deref() == Some(&entry.mal_id.to_string()))
             {
-                mal_client.cache_id(&matched.id, entry.mal_id, Provider::Anidb);
-                (matched.id.clone(), matched.mal_id.clone())
-            } else {
-                match results.len() {
-                    0 => {
-                        if provider == Provider::All {
-                            if let Ok(anineko_client) = AninekoClient::new() {
-                                println!("No results on AniDB. Trying AniNeko fallback...");
-                                if let Ok(retry) =
-                                    anineko_client.search_shows(&entry.title, translation).await
-                                {
-                                    if !retry.is_empty() {
-                                        let chosen = if retry.len() == 1 {
-                                            retry[0].clone()
-                                        } else {
-                                            let opts: Vec<String> = retry
-                                                .iter()
-                                                .map(|s| {
-                                                    format!(
-                                                        "{} [{} ep]",
-                                                        s.title, s.available_eps.sub
-                                                    )
-                                                })
-                                                .collect();
-                                            let pick = dialoguer::Select::with_theme(&theme)
-                                                .with_prompt(format!(
-                                                    "Which AniNeko entry matches \"{}\"? (Esc = back)",
-                                                    entry.title
-                                                ))
-                                                .items(&opts)
-                                                .default(0)
-                                                .interact_opt()?;
-                                            let Some(i) = pick else { continue };
-                                            retry[i].clone()
-                                        };
-                                        let mut show = chosen;
-                                        show.mal_id = Some(entry.mal_id.to_string());
-                                        mal_client.cache_id(
-                                            &show.id,
-                                            entry.mal_id,
-                                            Provider::Anineko,
-                                        );
-                                        return play_show(
-                                            &anineko_client,
-                                            history,
-                                            history_path,
-                                            translation,
-                                            Provider::Anineko,
-                                            show,
-                                            episode.clone(),
-                                            entry.num_episodes_watched.map(|n| n.to_string()),
-                                            auto_play_next,
-                                            Some(mal_client),
-                                            binge,
-                                            config,
-                                            skip_opts,
-                                            None,
-                                        )
-                                        .await;
-                                    }
-                                }
-                            }
-                        }
-                        println!(
-                            "No AniDB results for \"{}\". Try a different search query (or Esc to go back).",
+                chosen_show = Some(matched.clone());
+                break;
+            }
+
+            match results.len() {
+                0 => {
+                    println!(
+                        "No {} results for \"{}\". Try a different search query (or Esc to go back).",
+                        provider.display_name(),
+                        search_query
+                    );
+                    let query: String = dialoguer::Input::with_theme(&theme)
+                        .with_prompt("Search query")
+                        .allow_empty(true)
+                        .interact_text()?;
+                    if query.trim().is_empty() {
+                        break;
+                    }
+                    search_query = query.trim().to_string();
+                }
+                1 => {
+                    chosen_show = Some(results[0].clone());
+                    break;
+                }
+                _ => {
+                    let opts: Vec<String> = results
+                        .iter()
+                        .map(|s| {
+                            let count = match translation {
+                                Translation::Sub => s.available_eps.sub,
+                                Translation::Dub => s.available_eps.dub,
+                                Translation::Raw => 0,
+                            };
+                            format!("{} [{} ep]", s.title, count)
+                        })
+                        .collect();
+                    let pick = dialoguer::Select::with_theme(&theme)
+                        .with_prompt(format!(
+                            "Which {} entry matches \"{}\"? (Esc = back)",
+                            provider.display_name(),
                             entry.title
-                        );
-                        let query: String = dialoguer::Input::with_theme(&theme)
-                            .with_prompt("Search query")
-                            .allow_empty(true)
-                            .interact_text()?;
-                        if query.trim().is_empty() {
-                            continue;
-                        }
-                        let retry = anidb.search_shows(query.trim(), translation).await?;
-                        if retry.is_empty() {
-                            println!("Still no results. Going back to watchlist.");
-                            continue;
-                        }
-                        let opts: Vec<String> = retry
-                            .iter()
-                            .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
-                            .collect();
-                        let pick = dialoguer::Select::with_theme(&theme)
-                            .with_prompt(format!(
-                                "Which AniDB entry matches \"{}\"? (Esc = back)",
-                                entry.title
-                            ))
-                            .items(&opts)
-                            .default(0)
-                            .interact_opt()?;
-                        let Some(i) = pick else { continue };
-                        let chosen = &retry[i];
-                        mal_client.cache_id(&chosen.id, entry.mal_id, Provider::Anidb);
-                        (chosen.id.clone(), chosen.mal_id.clone())
-                    }
-                    _ => {
-                        let opts: Vec<String> = results
-                            .iter()
-                            .map(|s| format!("{} [{} ep]", s.title, s.available_eps.sub))
-                            .collect();
-                        let pick = dialoguer::Select::with_theme(&theme)
-                            .with_prompt(format!(
-                                "Which AniDB entry matches \"{}\"? (Esc = back)",
-                                entry.title
-                            ))
-                            .items(&opts)
-                            .default(0)
-                            .interact_opt()?;
-                        let Some(i) = pick else {
-                            continue;
-                        };
-                        let chosen = &results[i];
-                        mal_client.cache_id(&chosen.id, entry.mal_id, Provider::Anidb);
-                        (chosen.id.clone(), chosen.mal_id.clone())
-                    }
+                        ))
+                        .items(&opts)
+                        .default(0)
+                        .interact_opt()?;
+                    let Some(i) = pick else {
+                        break;
+                    };
+                    chosen_show = Some(results[i].clone());
+                    break;
                 }
             }
+        }
+
+        let Some(mut show) = chosen_show else {
+            continue;
         };
 
-        let show = ShowInfo {
-            id: anidb_id,
-            title: entry.title.clone(),
-            mal_id,
-            available_eps: EpisodeCounts::default(),
-        };
+        show.mal_id = Some(entry.mal_id.to_string());
+        mal_client.cache_id(&show.id, entry.mal_id, provider);
 
-        let fallback_client = if provider == Provider::All {
-            AninekoClient::new().ok()
-        } else {
-            None
-        };
-
-        return play_show(
-            &anidb,
-            history,
-            history_path,
-            translation,
-            Provider::Anidb,
-            show,
-            episode.clone(),
-            entry.num_episodes_watched.map(|n| n.to_string()),
-            auto_play_next,
-            Some(mal_client),
-            binge,
-            config,
-            skip_opts,
-            fallback_client.as_ref(),
-        )
-        .await;
+        match provider {
+            Provider::Anidb => {
+                let client = AnidbClient::new()?;
+                return play_show(
+                    &client,
+                    history,
+                    history_path,
+                    translation,
+                    Provider::Anidb,
+                    show,
+                    episode.clone(),
+                    entry.num_episodes_watched.map(|n| n.to_string()),
+                    auto_play_next,
+                    Some(mal_client),
+                    binge,
+                    config,
+                    skip_opts,
+                )
+                .await;
+            }
+            Provider::Anineko => {
+                let client = AninekoClient::new()?;
+                return play_show(
+                    &client,
+                    history,
+                    history_path,
+                    translation,
+                    Provider::Anineko,
+                    show,
+                    episode.clone(),
+                    entry.num_episodes_watched.map(|n| n.to_string()),
+                    auto_play_next,
+                    Some(mal_client),
+                    binge,
+                    config,
+                    skip_opts,
+                )
+                .await;
+            }
+            Provider::Senshi => {
+                let client = SenshiClient::new()?;
+                return play_show(
+                    &client,
+                    history,
+                    history_path,
+                    translation,
+                    Provider::Senshi,
+                    show,
+                    episode.clone(),
+                    entry.num_episodes_watched.map(|n| n.to_string()),
+                    auto_play_next,
+                    Some(mal_client),
+                    binge,
+                    config,
+                    skip_opts,
+                )
+                .await;
+            }
+            _ => unreachable!(),
+        }
     }
 }
 

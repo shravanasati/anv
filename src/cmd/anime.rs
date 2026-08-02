@@ -156,7 +156,6 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             binge,
                             config,
                             skip_opts,
-                            None,
                         )
                         .await?;
                     }
@@ -194,13 +193,11 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             binge,
                             config,
                             skip_opts,
-                            None,
                         )
                         .await?;
                     }
                     Provider::Anidb | Provider::All => {
                         let client = AnidbClient::new()?;
-                        let fallback = AninekoClient::new().ok();
                         let show_info = if target_provider == entry.provider
                             || entry.provider == Provider::All
                         {
@@ -235,7 +232,6 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             binge,
                             config,
                             skip_opts,
-                            fallback.as_ref(),
                         )
                         .await?;
                     }
@@ -288,7 +284,6 @@ pub async fn run_anime_flow<P: SyncProvider>(
                 binge,
                 config,
                 skip_opts,
-                None,
             )
             .await
         }
@@ -320,7 +315,6 @@ pub async fn run_anime_flow<P: SyncProvider>(
                 binge,
                 config,
                 skip_opts,
-                None,
             )
             .await
         }
@@ -352,7 +346,6 @@ pub async fn run_anime_flow<P: SyncProvider>(
                 binge,
                 config,
                 skip_opts,
-                None,
             )
             .await
         }
@@ -434,7 +427,6 @@ pub async fn run_anime_flow<P: SyncProvider>(
                         binge,
                         config,
                         skip_opts,
-                        anineko_client.as_ref(),
                     )
                     .await
                 }
@@ -455,7 +447,6 @@ pub async fn run_anime_flow<P: SyncProvider>(
                         binge,
                         config,
                         skip_opts,
-                        None,
                     )
                     .await
                 }
@@ -476,7 +467,6 @@ pub async fn run_anime_flow<P: SyncProvider>(
                         binge,
                         config,
                         skip_opts,
-                        None,
                     )
                     .await
                 }
@@ -520,7 +510,7 @@ fn select_show(
     Ok(selection.map(|idx| shows[idx].clone()))
 }
 
-fn select_show_with_provider(
+pub(crate) fn select_show_with_provider(
     items: &[(Provider, ShowInfo)],
     translation: Translation,
     theme: &dialoguer::theme::ColorfulTheme,
@@ -567,7 +557,6 @@ pub async fn play_show<P: SyncProvider>(
     binge: bool,
     config: &AppConfig,
     skip_opts: SkipOptions,
-    fallback_client: Option<&AninekoClient>,
 ) -> Result<()> {
     let episodes = client.fetch_episodes(&show.id, translation).await?;
     if episodes.is_empty() {
@@ -660,7 +649,6 @@ pub async fn play_show<P: SyncProvider>(
         let auto_advance = idx == default_idx;
 
         println!("Fetching streams for episode {}...", chosen);
-        let mut active_provider = provider;
         let streams = match client.fetch_streams(&show.id, translation, &chosen).await {
             Ok(s) if !s.is_empty() => s,
             res => {
@@ -676,37 +664,7 @@ pub async fn play_show<P: SyncProvider>(
                         }
                     }
                 }
-
-                if let Some(fallback) = fallback_client {
-                    println!(
-                        "No streams found on {active_provider:?}. Attempting AniNeko fallback..."
-                    );
-                    if let Ok(fallback_shows) =
-                        fallback.search_shows(&show.title, translation).await
-                    {
-                        if let Some(fallback_show) = fallback_shows.first() {
-                            if let Ok(fallback_streams) = fallback
-                                .fetch_streams(&fallback_show.id, translation, &chosen)
-                                .await
-                            {
-                                if !fallback_streams.is_empty() {
-                                    active_provider = Provider::Anineko;
-                                    fallback_streams
-                                } else {
-                                    Vec::new()
-                                }
-                            } else {
-                                Vec::new()
-                            }
-                        } else {
-                            Vec::new()
-                        }
-                    } else {
-                        Vec::new()
-                    }
-                } else {
-                    Vec::new()
-                }
+                Vec::new()
             }
         };
 
@@ -718,7 +676,7 @@ pub async fn play_show<P: SyncProvider>(
             continue;
         }
 
-        let Some(stream) = (if active_provider == Provider::Anidb {
+        let Some(stream) = (if provider == Provider::Anidb {
             select_stream_by_quality(streams, config.anidb.quality)?
         } else {
             choose_stream(streams)?
@@ -743,16 +701,16 @@ pub async fn play_show<P: SyncProvider>(
             show_title: show.title.clone(),
             episode: chosen.clone(),
             translation,
-            provider: active_provider,
+            provider,
             is_manga: false,
             watched_at: Utc::now(),
         });
         history.save(history_path)?;
 
-        if let Some(provider) = sync_provider {
+        if let Some(sync_prov) = sync_provider {
             let ep_num = chosen.parse::<u32>().unwrap_or(0);
-            if let Err(err) = provider
-                .sync_episode(&show.id, &show.title, ep_num, active_provider)
+            if let Err(err) = sync_prov
+                .sync_episode(&show.id, &show.title, ep_num, provider)
                 .await
             {
                 eprintln!("[sync] error: {err}");
