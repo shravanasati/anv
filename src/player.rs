@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use tokio::process::Command;
 
 use crate::aniskip::{SkipOptions, prepare_aniskip_args};
-use crate::config::AppConfig;
+use crate::config::{AnidbQuality, AppConfig};
 use crate::history::theme;
 use crate::proxy::{CachedPageTarget, LocalPageProxy};
 use crate::types::{Page, StreamOption};
@@ -44,6 +44,22 @@ pub fn choose_stream(mut options: Vec<StreamOption>) -> Result<Option<StreamOpti
         return Ok(None);
     };
     Ok(Some(options.remove(idx)))
+}
+
+/// Pick a stream according to the AniDB quality policy from config.
+/// Streams must already be sorted highest-quality-first (as `fetch_streams` guarantees).
+pub fn select_stream_by_quality(
+    mut options: Vec<StreamOption>,
+    quality: AnidbQuality,
+) -> Result<Option<StreamOption>> {
+    if options.is_empty() {
+        return Ok(None);
+    }
+    match quality {
+        AnidbQuality::Highest => Ok(Some(options.remove(0))),
+        AnidbQuality::Lowest => Ok(Some(options.remove(options.len() - 1))),
+        AnidbQuality::Select => choose_stream(options),
+    }
 }
 
 pub async fn launch_player(

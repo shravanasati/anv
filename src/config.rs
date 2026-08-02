@@ -36,6 +36,9 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub aniskip: AniskipConfig,
+
+    #[serde(default)]
+    pub anidb: AnidbConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -67,6 +70,34 @@ pub struct MalConfig {
 pub struct SyncConfig {
     #[serde(default)]
     pub enabled: bool,
+}
+
+/// How to pick a quality variant when AniDB returns multiple stream options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AnidbQuality {
+    /// Always pick the highest available resolution.
+    Highest,
+    /// Always pick the lowest available resolution.
+    Lowest,
+    /// Prompt the user to choose (default).
+    #[default]
+    Select,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AnidbConfig {
+    /// Quality selection strategy for AniDB streams.
+    #[serde(default)]
+    pub quality: AnidbQuality,
+}
+
+impl Default for AnidbConfig {
+    fn default() -> Self {
+        Self {
+            quality: AnidbQuality::Select,
+        }
+    }
 }
 
 fn default_player() -> String {
@@ -118,6 +149,12 @@ const CONFIG_HEADER: &str = "# anv configuration
 #   skip_mixed_op -- skip mixed opening (default: false)
 #   skip_mixed_ed -- skip mixed ending (default: false)
 #   skip_recap    -- skip recap (default: false)
+#
+# [anidb]
+#   quality -- stream quality selection strategy
+#             \"select\"  -- prompt to choose from available resolutions (default)
+#             \"highest\" -- always pick the highest available resolution
+#             \"lowest\"  -- always pick the lowest available resolution
 
 ";
 
@@ -144,6 +181,7 @@ impl Default for AppConfig {
             mal: MalConfig::default(),
             sync: SyncConfig::default(),
             aniskip: AniskipConfig::default(),
+            anidb: AnidbConfig::default(),
         }
     }
 }

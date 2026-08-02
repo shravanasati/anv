@@ -85,6 +85,7 @@ use crate::types::Provider;
 pub struct MalIdCache {
     /// Legacy AllAnime-era bucket — read-only for migration, never written back.
     #[serde(default, skip_serializing)]
+    #[allow(dead_code)]
     entries: HashMap<String, u32>,
     #[serde(default)]
     anidb_entries: HashMap<String, u32>,

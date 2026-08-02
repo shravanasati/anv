@@ -9,7 +9,7 @@ use crate::aniskip::SkipOptions;
 use crate::cmd::manga::read_manga;
 use crate::config::AppConfig;
 use crate::history::{History, HistoryEntry, theme};
-use crate::player::{choose_stream, launch_player};
+use crate::player::{choose_stream, launch_player, select_stream_by_quality};
 use crate::providers::{
     AnimeProvider, MangaProvider, anidb::AnidbClient, anineko::AninekoClient,
     mangadex::MangaDexClient, mangapill::MangapillClient, senshi::SenshiClient,
@@ -703,7 +703,11 @@ pub async fn play_show<P: SyncProvider>(
             continue;
         }
 
-        let Some(stream) = choose_stream(streams)? else {
+        let Some(stream) = (if active_provider == Provider::Anidb {
+            select_stream_by_quality(streams, config.anidb.quality)?
+        } else {
+            choose_stream(streams)?
+        }) else {
             continue;
         };
 
