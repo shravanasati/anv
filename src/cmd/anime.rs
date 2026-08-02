@@ -29,6 +29,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
     binge: bool,
     auto_play_next: bool,
     provider: Provider,
+    download_range: Option<String>,
 ) -> Result<()> {
     let skip_opts = SkipOptions {
         skip_op: cli.skip_op,
@@ -47,6 +48,9 @@ pub async fn run_anime_flow<P: SyncProvider>(
             };
 
             if entry.is_manga {
+                if download_range.is_some() {
+                    bail!("The --download / -D flag is currently only supported for anime streaming.");
+                }
                 match target_provider {
                     Provider::Anidb => {
                         bail!("Provider 'AniDB' does not support manga.");
@@ -156,6 +160,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             binge,
                             config,
                             skip_opts,
+                            download_range.clone(),
                         )
                         .await?;
                     }
@@ -193,6 +198,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             binge,
                             config,
                             skip_opts,
+                            download_range.clone(),
                         )
                         .await?;
                     }
@@ -232,6 +238,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
                             binge,
                             config,
                             skip_opts,
+                            download_range.clone(),
                         )
                         .await?;
                     }
@@ -284,6 +291,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
                 binge,
                 config,
                 skip_opts,
+                download_range.clone(),
             )
             .await
         }
@@ -315,6 +323,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
                 binge,
                 config,
                 skip_opts,
+                download_range.clone(),
             )
             .await
         }
@@ -346,6 +355,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
                 binge,
                 config,
                 skip_opts,
+                download_range.clone(),
             )
             .await
         }
@@ -427,6 +437,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
                         binge,
                         config,
                         skip_opts,
+                        download_range.clone(),
                     )
                     .await
                 }
@@ -447,6 +458,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
                         binge,
                         config,
                         skip_opts,
+                        download_range.clone(),
                     )
                     .await
                 }
@@ -467,6 +479,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
                         binge,
                         config,
                         skip_opts,
+                        download_range.clone(),
                     )
                     .await
                 }
@@ -557,6 +570,7 @@ pub async fn play_show<P: SyncProvider>(
     binge: bool,
     config: &AppConfig,
     skip_opts: SkipOptions,
+    download_range: Option<String>,
 ) -> Result<()> {
     let episodes = client.fetch_episodes(&show.id, translation).await?;
     if episodes.is_empty() {
@@ -565,6 +579,43 @@ pub async fn play_show<P: SyncProvider>(
             translation.label(),
             show.title
         );
+    }
+
+    if let Some(range_str) = download_range {
+        let target_episodes = crate::downloader::parse_episode_range(&range_str, &episodes)?;
+        println!(
+            "Downloading {} episode(s) for '{}' ({}): {:?}",
+            target_episodes.len(),
+            show.title,
+            translation.label(),
+            target_episodes
+        );
+
+        for chosen in &target_episodes {
+            println!("Fetching streams for episode {}...", chosen);
+            let streams = match client.fetch_streams(&show.id, translation, chosen).await {
+                Ok(s) if !s.is_empty() => s,
+                _ => {
+                    eprintln!("No supported streams found for episode {chosen}. Skipping.");
+                    continue;
+                }
+            };
+
+            let stream = if provider == Provider::Anidb {
+                select_stream_by_quality(streams, config.anidb.quality)?
+            } else {
+                select_stream_by_quality(streams, crate::config::AnidbQuality::Highest)?
+            };
+
+            let Some(stream) = stream else {
+                eprintln!("No stream selected for episode {chosen}. Skipping.");
+                continue;
+            };
+
+            crate::downloader::download_episode(&stream, &show.title, chosen, config).await?;
+        }
+
+        return Ok(());
     }
 
     if show.mal_id.is_none() {

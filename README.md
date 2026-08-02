@@ -45,6 +45,8 @@ anv depends on **mpv** to play media. It is a necessary requirement. Ensure `mpv
 
 MPV installation docs: https://mpv.io/installation/
 
+If you wish to download episodes, you will need to install ffmpeg, yt-dlp, and aria2c, depending on the downloader engines you wish to use. (see below)
+
 ## Quick start quests
 
 Search and stream:
@@ -95,6 +97,12 @@ anv -e 12 "bocchi the rock"
 Watch in binge mode (automatically play subsequent episodes):
 ```bash
 anv -e 1 -b "bocchi the rock"
+```
+
+Download episode(s) instead of playing:
+```bash
+anv -D 4 "bocchi the rock"
+anv -D 1-5 "bocchi the rock"
 ```
 
 Pick from your MAL Plan to Watch list and stream:
@@ -168,6 +176,11 @@ skip_ed = true
 #                 "highest" — automatically select highest available resolution
 #                 "lowest"  — automatically select lowest available resolution
 quality = "select"
+
+[download]
+# dir        — download output directory (default: current directory ".")
+# downloader — downloader engine: "ffmpeg", "ytdlp" (or "yt-dlp"), "ytdlp+aria2c" (default: "ffmpeg")
+downloader = "ffmpeg"
 ```
 
 ## MAL sync
@@ -270,6 +283,8 @@ After each episode finishes playing:
 - Set `auto_play_next = true` in your config to make `-n` the default behavior.
 - Run `anv-update` to pull the latest release whenever streams break or a new provider quirk surfaces.
 - Run `anv sync status` to quickly check if your MAL token is still valid before a long watch session.
+- Use `-D <RANGE>` / `--download <RANGE>` to download single episodes or episode ranges instead of streaming.
+- Customize the downloader engine under `[download].downloader` in your config file (`ffmpeg`, `ytdlp`, or `ytdlp+aria2c`) (yt-dlp is typically the fastest).
 - `anv watching` and `anv watchlist` are the fastest paths from "what should I watch?" to actually watching it — the MAL mapping is cached after the first run, so subsequent launches are instant.
 
 ## Troubleshooting

@@ -8,6 +8,7 @@ mod aniskip;
 mod cache;
 mod cmd;
 mod config;
+mod downloader;
 mod history;
 mod player;
 mod providers;
@@ -62,6 +63,10 @@ pub struct Cli {
     #[arg(short = 'e', long, value_name = "EPISODE")]
     pub episode: Option<String>,
 
+    /// Download episode(s) instead of playing. Range can be a single episode (e.g. 4) or range (e.g. 1-5).
+    #[arg(short = 'D', long = "download", value_name = "RANGE")]
+    pub download: Option<String>,
+
     /// Skip opening sequences (override config).
     #[arg(long, action = clap::ArgAction::Set)]
     pub skip_op: Option<bool>,
@@ -105,6 +110,10 @@ pub enum Commands {
         /// Content provider to use for streaming or reading.
         #[arg(short = 'p', long, value_enum, value_name = "PROVIDER")]
         provider: Option<Provider>,
+
+        /// Download episode(s) instead of playing. Range can be a single episode (e.g. 4) or range (e.g. 1-5).
+        #[arg(short = 'D', long = "download", value_name = "RANGE")]
+        download: Option<String>,
     },
 
     /// Browse your MAL "Plan to Watch" list and start streaming.
@@ -129,6 +138,10 @@ pub enum Commands {
         /// Content provider to use for streaming or reading.
         #[arg(short = 'p', long, value_enum, value_name = "PROVIDER")]
         provider: Option<Provider>,
+
+        /// Download episode(s) instead of playing. Range can be a single episode (e.g. 4) or range (e.g. 1-5).
+        #[arg(short = 'D', long = "download", value_name = "RANGE")]
+        download: Option<String>,
     },
 
     /// Browse your MAL "Watching" list and start streaming.
@@ -153,6 +166,10 @@ pub enum Commands {
         /// Content provider to use for streaming or reading.
         #[arg(short = 'p', long, value_enum, value_name = "PROVIDER")]
         provider: Option<Provider>,
+
+        /// Download episode(s) instead of playing. Range can be a single episode (e.g. 4) or range (e.g. 1-5).
+        #[arg(short = 'D', long = "download", value_name = "RANGE")]
+        download: Option<String>,
     },
 
     /// Manage sync with external anime list services (e.g. MyAnimeList).
@@ -202,6 +219,7 @@ async fn run() -> Result<()> {
             binge: history_binge,
             next_episode: history_next,
             provider: history_provider,
+            download: history_download,
         }) => {
             let history_path = history_path()?;
             let mut history = History::load(&history_path)?;
@@ -209,6 +227,7 @@ async fn run() -> Result<()> {
             let binge = *history_binge || cli.binge || cfg.binge;
             let auto_play_next = *history_next || cfg.auto_play_next;
             let provider = history_provider.unwrap_or(cli.provider);
+            let download = history_download.clone().or_else(|| cli.download.clone());
             return cmd::anime::run_anime_flow(
                 &cli,
                 &cfg,
@@ -220,6 +239,7 @@ async fn run() -> Result<()> {
                 binge,
                 auto_play_next,
                 provider,
+                download,
             )
             .await;
         }
@@ -229,6 +249,7 @@ async fn run() -> Result<()> {
             episode: wl_episode,
             next_episode: wl_next,
             provider: wl_provider,
+            download: wl_download,
         }) => {
             let history_path = history_path()?;
             let mut history = History::load(&history_path)?;
@@ -242,6 +263,7 @@ async fn run() -> Result<()> {
             };
             let episode = wl_episode.clone().or_else(|| cli.episode.clone());
             let provider = wl_provider.unwrap_or(cli.provider);
+            let download = wl_download.clone().or_else(|| cli.download.clone());
             return match mal_client.as_ref() {
                 None => {
                     eprintln!(
@@ -264,6 +286,7 @@ async fn run() -> Result<()> {
                         &cfg,
                         &cli,
                         provider,
+                        download,
                     )
                     .await
                 }
@@ -275,6 +298,7 @@ async fn run() -> Result<()> {
             episode: w_episode,
             next_episode: w_next,
             provider: w_provider,
+            download: w_download,
         }) => {
             let history_path = history_path()?;
             let mut history = History::load(&history_path)?;
@@ -288,6 +312,7 @@ async fn run() -> Result<()> {
             };
             let episode = w_episode.clone().or_else(|| cli.episode.clone());
             let provider = w_provider.unwrap_or(cli.provider);
+            let download = w_download.clone().or_else(|| cli.download.clone());
             return match mal_client.as_ref() {
                 None => {
                     eprintln!(
@@ -310,6 +335,7 @@ async fn run() -> Result<()> {
                         &cfg,
                         &cli,
                         provider,
+                        download,
                     )
                     .await
                 }
@@ -337,6 +363,9 @@ async fn run() -> Result<()> {
     let mal_client = build_mal_client_if_enabled(&cfg).await;
 
     if cli.manga {
+        if cli.download.is_some() {
+            anyhow::bail!("The --download / -D flag is currently only supported for anime streaming.");
+        }
         let translation = if cli.raw {
             Translation::Raw
         } else {
@@ -378,6 +407,7 @@ async fn run() -> Result<()> {
         binge,
         auto_play_next,
         cli.provider,
+        cli.download.clone(),
     )
     .await
 }

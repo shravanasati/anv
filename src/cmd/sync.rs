@@ -26,6 +26,7 @@ pub async fn run_mal_list(
     config: &AppConfig,
     cli: &Cli,
     provider: Provider,
+    download_range: Option<String>,
 ) -> Result<()> {
     if !provider.is_anime() {
         bail!(
@@ -194,6 +195,7 @@ pub async fn run_mal_list(
                             binge,
                             config,
                             skip_opts,
+                            download_range.clone(),
                         )
                         .await;
                     }
@@ -213,6 +215,7 @@ pub async fn run_mal_list(
                             binge,
                             config,
                             skip_opts,
+                            download_range.clone(),
                         )
                         .await;
                     }
@@ -232,6 +235,7 @@ pub async fn run_mal_list(
                             binge,
                             config,
                             skip_opts,
+                            download_range.clone(),
                         )
                         .await;
                     }
@@ -266,6 +270,7 @@ pub async fn run_mal_list(
                         binge,
                         config,
                         skip_opts,
+                        download_range.clone(),
                     )
                     .await;
                 }
@@ -285,6 +290,7 @@ pub async fn run_mal_list(
                         binge,
                         config,
                         skip_opts,
+                        download_range.clone(),
                     )
                     .await;
                 }
@@ -304,6 +310,7 @@ pub async fn run_mal_list(
                         binge,
                         config,
                         skip_opts,
+                        download_range.clone(),
                     )
                     .await;
                 }
@@ -418,6 +425,7 @@ pub async fn run_mal_list(
                     binge,
                     config,
                     skip_opts,
+                    download_range.clone(),
                 )
                 .await;
             }
@@ -437,6 +445,7 @@ pub async fn run_mal_list(
                     binge,
                     config,
                     skip_opts,
+                    download_range.clone(),
                 )
                 .await;
             }
@@ -456,6 +465,7 @@ pub async fn run_mal_list(
                     binge,
                     config,
                     skip_opts,
+                    download_range.clone(),
                 )
                 .await;
             }

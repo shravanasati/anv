@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 use toml::Value;
 
+use crate::downloader::DownloaderEngine;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AppConfig {
     #[serde(default = "default_player")]
@@ -32,6 +34,9 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub anidb: AnidbConfig,
+
+    #[serde(default)]
+    pub download: DownloadConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -93,6 +98,17 @@ impl Default for AnidbConfig {
     }
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct DownloadConfig {
+    /// Target directory for saving downloaded episodes (defaults to "." if not specified).
+    #[serde(default)]
+    pub dir: Option<PathBuf>,
+
+    /// Executable binary/engine for downloading streams (default: DownloaderEngine::Ffmpeg).
+    #[serde(default)]
+    pub downloader: DownloaderEngine,
+}
+
 fn default_player() -> String {
     "mpv".to_string()
 }
@@ -141,6 +157,10 @@ const CONFIG_HEADER: &str = "# anv configuration
 #             \"select\"  -- prompt to choose from available resolutions (default)
 #             \"highest\" -- always pick the highest available resolution
 #             \"lowest\"  -- always pick the lowest available resolution
+#
+# [download]
+#   dir        -- download output directory (default: current directory \".\")
+#   downloader -- downloader engine: \"ffmpeg\", \"ytdlp\" (or \"yt-dlp\"), \"ytdlp+aria2c\" (default: \"ffmpeg\")
 
 ";
 
@@ -167,6 +187,7 @@ impl Default for AppConfig {
             sync: SyncConfig::default(),
             aniskip: AniskipConfig::default(),
             anidb: AnidbConfig::default(),
+            download: DownloadConfig::default(),
         }
     }
 }
@@ -306,5 +327,16 @@ skip_op = true
             .expect("Should deserialize despite unknown api_proxy field");
         assert_eq!(config.player, "mpv");
         assert!(config.binge);
+        assert_eq!(config.download.downloader, DownloaderEngine::Ffmpeg);
+    }
+
+    #[test]
+    fn test_download_config_deserialization() {
+        let toml_str = r#"
+[download]
+downloader = "ytdlp+aria2c"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.download.downloader, DownloaderEngine::YtdlpAria2c);
     }
 }
