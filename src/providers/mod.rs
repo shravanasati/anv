@@ -126,14 +126,19 @@ impl Provider {
             Provider::Animehub => Ok(AnyAnimeClient::Animehub(animehub::AnimehubClient::new()?)),
             Provider::Anineko => Ok(AnyAnimeClient::Anineko(anineko::AninekoClient::new()?)),
             Provider::Senshi => Ok(AnyAnimeClient::Senshi(senshi::SenshiClient::new()?)),
-            _ => bail!("Provider '{}' does not support anime streaming.", self.display_name()),
+            _ => bail!(
+                "Provider '{}' does not support anime streaming.",
+                self.display_name()
+            ),
         }
     }
 
     pub fn manga_client(&self) -> Result<AnyMangaClient> {
         match self {
             Provider::Mangadex => Ok(AnyMangaClient::Mangadex(mangadex::MangaDexClient::new()?)),
-            Provider::Mangapill => Ok(AnyMangaClient::Mangapill(mangapill::MangapillClient::new()?)),
+            Provider::Mangapill => {
+                Ok(AnyMangaClient::Mangapill(mangapill::MangapillClient::new()?))
+            }
             _ => bail!("Provider '{}' does not support manga.", self.display_name()),
         }
     }
@@ -157,4 +162,3 @@ impl Provider {
         names.join(", ")
     }
 }
-

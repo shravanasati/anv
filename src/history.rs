@@ -145,7 +145,8 @@ mod tests {
             ]
         }"#;
 
-        let history: History = serde_json::from_str(json_data).expect("failed to deserialize history JSON");
+        let history: History =
+            serde_json::from_str(json_data).expect("failed to deserialize history JSON");
         assert_eq!(history.entries.len(), 1);
         assert_eq!(history.entries[0].provider, Provider::Unknown);
     }

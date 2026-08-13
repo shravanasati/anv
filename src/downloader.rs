@@ -16,15 +16,15 @@ pub enum DownloaderEngine {
     YtdlpAria2c,
 }
 
-impl DownloaderEngine {
-    pub fn all() -> &'static [DownloaderEngine] {
-        &[
-            DownloaderEngine::Ffmpeg,
-            DownloaderEngine::Ytdlp,
-            DownloaderEngine::YtdlpAria2c,
-        ]
-    }
-}
+// impl DownloaderEngine {
+//     pub fn all() -> &'static [DownloaderEngine] {
+//         &[
+//             DownloaderEngine::Ffmpeg,
+//             DownloaderEngine::Ytdlp,
+//             DownloaderEngine::YtdlpAria2c,
+//         ]
+//     }
+// }
 
 impl std::fmt::Display for DownloaderEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -43,9 +43,8 @@ impl std::str::FromStr for DownloaderEngine {
         match s.to_lowercase().trim() {
             "ffmpeg" => Ok(Self::Ffmpeg),
             "ytdlp" | "yt-dlp" => Ok(Self::Ytdlp),
-            "ytdlp+aria2c" | "ytdlp_aria2c" | "ytdlp-aria2c" | "yt-dlp+aria2c" | "yt-dlp-aria2c" | "yt-dlp_aria2c" => {
-                Ok(Self::YtdlpAria2c)
-            }
+            "ytdlp+aria2c" | "ytdlp_aria2c" | "ytdlp-aria2c" | "yt-dlp+aria2c"
+            | "yt-dlp-aria2c" | "yt-dlp_aria2c" => Ok(Self::YtdlpAria2c),
             _ => Err(format!(
                 "Unknown downloader engine '{s}'. Supported downloaders: ffmpeg, ytdlp, ytdlp+aria2c"
             )),
@@ -243,12 +242,9 @@ pub async fn download_with_ffmpeg(stream: &StreamOption, output_path: &Path) -> 
 
     cmd.arg("-protocol_whitelist")
         .arg("file,http,https,tcp,tls,crypto,data");
-    cmd.arg("-allowed_extensions")
-        .arg("ALL");
-    cmd.arg("-allowed_segment_extensions")
-        .arg("ALL");
-    cmd.arg("-extension_picky")
-        .arg("0");
+    cmd.arg("-allowed_extensions").arg("ALL");
+    cmd.arg("-allowed_segment_extensions").arg("ALL");
+    cmd.arg("-extension_picky").arg("0");
     if stream.is_hls {
         cmd.arg("-f").arg("hls");
     }
@@ -443,14 +439,35 @@ mod tests {
     fn test_downloader_engine_parse_and_display() {
         use std::str::FromStr;
 
-        assert_eq!(DownloaderEngine::all().len(), 3);
-        assert_eq!(DownloaderEngine::from_str("ffmpeg").unwrap(), DownloaderEngine::Ffmpeg);
-        assert_eq!(DownloaderEngine::from_str("ytdlp").unwrap(), DownloaderEngine::Ytdlp);
-        assert_eq!(DownloaderEngine::from_str("yt-dlp").unwrap(), DownloaderEngine::Ytdlp);
-        assert_eq!(DownloaderEngine::from_str("ytdlp+aria2c").unwrap(), DownloaderEngine::YtdlpAria2c);
-        assert_eq!(DownloaderEngine::from_str("yt-dlp+aria2c").unwrap(), DownloaderEngine::YtdlpAria2c);
-        assert_eq!(DownloaderEngine::from_str("ytdlp-aria2c").unwrap(), DownloaderEngine::YtdlpAria2c);
-        assert_eq!(DownloaderEngine::from_str("ytdlp_aria2c").unwrap(), DownloaderEngine::YtdlpAria2c);
+        // assert_eq!(DownloaderEngine::all().len(), 3);
+        assert_eq!(
+            DownloaderEngine::from_str("ffmpeg").unwrap(),
+            DownloaderEngine::Ffmpeg
+        );
+        assert_eq!(
+            DownloaderEngine::from_str("ytdlp").unwrap(),
+            DownloaderEngine::Ytdlp
+        );
+        assert_eq!(
+            DownloaderEngine::from_str("yt-dlp").unwrap(),
+            DownloaderEngine::Ytdlp
+        );
+        assert_eq!(
+            DownloaderEngine::from_str("ytdlp+aria2c").unwrap(),
+            DownloaderEngine::YtdlpAria2c
+        );
+        assert_eq!(
+            DownloaderEngine::from_str("yt-dlp+aria2c").unwrap(),
+            DownloaderEngine::YtdlpAria2c
+        );
+        assert_eq!(
+            DownloaderEngine::from_str("ytdlp-aria2c").unwrap(),
+            DownloaderEngine::YtdlpAria2c
+        );
+        assert_eq!(
+            DownloaderEngine::from_str("ytdlp_aria2c").unwrap(),
+            DownloaderEngine::YtdlpAria2c
+        );
 
         assert_eq!(DownloaderEngine::Ffmpeg.to_string(), "ffmpeg");
         assert_eq!(DownloaderEngine::Ytdlp.to_string(), "ytdlp");

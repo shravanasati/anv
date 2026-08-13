@@ -214,11 +214,7 @@ impl AnimeProvider for AnimehubClient {
         Ok(shows)
     }
 
-    async fn fetch_episodes(
-        &self,
-        show_id: &str,
-        translation: Translation,
-    ) -> Result<Vec<String>> {
+    async fn fetch_episodes(&self, show_id: &str, translation: Translation) -> Result<Vec<String>> {
         let mut identifier = show_id.to_string();
         if translation == Translation::Dub && !identifier.ends_with("-dub") {
             identifier.push_str("-dub");
@@ -237,10 +233,7 @@ impl AnimeProvider for AnimehubClient {
             .unwrap_or(&identifier);
 
         let ep_api_url = format!("{ANIMEHUB_BASE_URL}/ajax/film/sv?id={slug}");
-        let req = self
-            .client
-            .get(&ep_api_url)
-            .header("Referer", &anime_url);
+        let req = self.client.get(&ep_api_url).header("Referer", &anime_url);
 
         let body = self.fetch_string_with_retry(req).await?;
 
@@ -300,10 +293,7 @@ impl AnimeProvider for AnimehubClient {
         let server = 0;
         let ep_info_url =
             format!("{ANIMEHUB_BASE_URL}/ajax/episode/info?epr={slug}/{episode}/{server}");
-        let req = self
-            .client
-            .get(&ep_info_url)
-            .header("Referer", &anime_url);
+        let req = self.client.get(&ep_info_url).header("Referer", &anime_url);
 
         let body = self.fetch_string_with_retry(req).await?;
 
@@ -323,10 +313,7 @@ impl AnimeProvider for AnimehubClient {
             target_url.host_str().unwrap_or_default()
         );
 
-        let req = self
-            .client
-            .get(&target)
-            .header("Referer", &anime_url);
+        let req = self.client.get(&target).header("Referer", &anime_url);
         let target_html = self.fetch_string_with_retry(req).await?;
 
         let re_zrpart2 = regex::Regex::new(r#"var\s+zrpart2\s*=\s*['"]([^'"]+)['"]"#)?;
@@ -344,8 +331,8 @@ impl AnimeProvider for AnimehubClient {
         let hs_html = self.fetch_string_with_retry(req).await?;
 
         let doc = Html::parse_document(&hs_html);
-        let sources_sel = Selector::parse("div#sources")
-            .map_err(|e| anyhow!("invalid sources selector: {e}"))?;
+        let sources_sel =
+            Selector::parse("div#sources").map_err(|e| anyhow!("invalid sources selector: {e}"))?;
         let sources_el = doc
             .select(&sources_sel)
             .next()
