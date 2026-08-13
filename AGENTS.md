@@ -146,11 +146,8 @@ There are **two** routing sites — both must be updated:
 `play_show` in `src/cmd/anime.rs` already handles every provider generically via
 the `AnimeProvider` trait, but there are two provider-specific branches:
 
-- [ ] **Quality selection**: The `Provider::Anidb` branch uses
-      `select_stream_by_quality(streams, config.anidb.quality)` (config-driven).
-      All other providers use `choose_stream(streams)` (interactive picker).
-      Decide which is appropriate for the new provider; if it needs its own config
-      key, see §7.
+- [ ] **Quality selection**: `play_show` uses `select_stream_by_quality(streams, config.quality)`
+      generically across all providers using the global `config.quality` setting.
 - [ ] **MAL ID lazy-fetch**: `play_show` calls `client.fetch_mal_id(&show.id)`
       when `show.mal_id.is_none()` before entering the playback loop (needed for
       aniskip chapter markers). No code change needed here — handled generically

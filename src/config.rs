@@ -28,6 +28,9 @@ pub struct AppConfig {
     pub prefer_english_titles: bool,
 
     #[serde(default)]
+    pub quality: Quality,
+
+    #[serde(default)]
     pub mal: MalConfig,
 
     #[serde(default)]
@@ -35,9 +38,6 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub aniskip: AniskipConfig,
-
-    #[serde(default)]
-    pub anidb: AnidbConfig,
 
     #[serde(default)]
     pub download: DownloadConfig,
@@ -74,10 +74,10 @@ pub struct SyncConfig {
     pub enabled: bool,
 }
 
-/// How to pick a quality variant when AniDB returns multiple stream options.
+/// How to pick a quality variant when a provider returns multiple stream options.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
-pub enum AnidbQuality {
+pub enum Quality {
     /// Always pick the highest available resolution.
     Highest,
     /// Always pick the lowest available resolution.
@@ -85,21 +85,6 @@ pub enum AnidbQuality {
     /// Prompt the user to choose (default).
     #[default]
     Select,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct AnidbConfig {
-    /// Quality selection strategy for AniDB streams.
-    #[serde(default)]
-    pub quality: AnidbQuality,
-}
-
-impl Default for AnidbConfig {
-    fn default() -> Self {
-        Self {
-            quality: AnidbQuality::Select,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -163,11 +148,10 @@ const CONFIG_HEADER: &str = "# anv configuration
 #   skip_mixed_ed -- skip mixed ending (default: false)
 #   skip_recap    -- skip recap (default: false)
 #
-# [anidb]
-#   quality -- stream quality selection strategy
-#             \"select\"  -- prompt to choose from available resolutions (default)
-#             \"highest\" -- always pick the highest available resolution
-#             \"lowest\"  -- always pick the lowest available resolution
+# quality          -- stream quality selection strategy across all providers
+#                     \"select\"  -- prompt to choose from available resolutions (default)
+#                     \"highest\" -- always pick the highest available resolution
+#                     \"lowest\"  -- always pick the lowest available resolution
 #
 # [download]
 #   dir        -- download output directory (default: current directory \".\")
@@ -195,10 +179,10 @@ impl Default for AppConfig {
             auto_play_next: false,
             timeout: default_timeout(),
             prefer_english_titles: false,
+            quality: Quality::default(),
             mal: MalConfig::default(),
             sync: SyncConfig::default(),
             aniskip: AniskipConfig::default(),
-            anidb: AnidbConfig::default(),
             download: DownloadConfig::default(),
         }
     }

@@ -170,8 +170,7 @@ enabled = false
 skip_op = true
 skip_ed = true
 
-[anidb]
-# quality       — stream quality selection strategy ("select", "highest", "lowest")
+# quality       — stream quality selection strategy across all providers ("select", "highest", "lowest")
 #                 "select"  — prompt to choose from available resolutions (default)
 #                 "highest" — automatically select highest available resolution
 #                 "lowest"  — automatically select lowest available resolution

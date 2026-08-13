@@ -435,6 +435,8 @@ impl AnimeProvider for AnimehubClient {
                 headers,
                 subtitle: None,
             });
+        } else {
+            streams.sort_by(|a, b| b.quality_rank.cmp(&a.quality_rank));
         }
 
         Ok(streams)

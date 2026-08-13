@@ -9,7 +9,7 @@ use crate::aniskip::SkipOptions;
 use crate::cmd::manga::read_manga;
 use crate::config::AppConfig;
 use crate::history::{History, HistoryEntry, theme};
-use crate::player::{choose_stream, launch_player, select_stream_by_quality};
+use crate::player::{launch_player, select_stream_by_quality};
 use crate::providers::{
     AnimeProvider, MangaProvider, anidb::AnidbClient, animehub::AnimehubClient,
     anineko::AninekoClient, mangadex::MangaDexClient, mangapill::MangapillClient,
@@ -746,11 +746,7 @@ pub async fn play_show<P: SyncProvider>(
                 }
             };
 
-            let stream = if provider == Provider::Anidb {
-                select_stream_by_quality(streams, config.anidb.quality)?
-            } else {
-                select_stream_by_quality(streams, crate::config::AnidbQuality::Highest)?
-            };
+            let stream = select_stream_by_quality(streams, crate::config::Quality::Highest)?;
 
             let Some(stream) = stream else {
                 eprintln!("No stream selected for episode {chosen}. Skipping.");
@@ -912,11 +908,7 @@ pub async fn play_show<P: SyncProvider>(
             continue;
         }
 
-        let Some(stream) = (if provider == Provider::Anidb {
-            select_stream_by_quality(streams, config.anidb.quality)?
-        } else {
-            choose_stream(streams)?
-        }) else {
+        let Some(stream) = select_stream_by_quality(streams, config.quality)? else {
             continue;
         };
 

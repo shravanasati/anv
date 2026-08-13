@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use tokio::process::Command;
 
 use crate::aniskip::{SkipOptions, prepare_aniskip_args};
-use crate::config::{AnidbQuality, AppConfig};
+use crate::config::{AppConfig, Quality};
 use crate::history::theme;
 use crate::proxy::{CachedPageTarget, LocalPageProxy};
 use crate::types::{Page, StreamOption};
@@ -46,19 +46,36 @@ pub fn choose_stream(mut options: Vec<StreamOption>) -> Result<Option<StreamOpti
     Ok(Some(options.remove(idx)))
 }
 
-/// Pick a stream according to the AniDB quality policy from config.
-/// Streams must already be sorted highest-quality-first (as `fetch_streams` guarantees).
+/// Pick a stream according to the global stream quality policy from config.
 pub fn select_stream_by_quality(
     mut options: Vec<StreamOption>,
-    quality: AnidbQuality,
+    quality: Quality,
 ) -> Result<Option<StreamOption>> {
     if options.is_empty() {
         return Ok(None);
     }
     match quality {
-        AnidbQuality::Highest => Ok(Some(options.remove(0))),
-        AnidbQuality::Lowest => Ok(Some(options.remove(options.len() - 1))),
-        AnidbQuality::Select => choose_stream(options),
+        Quality::Highest => {
+            let max_idx = options
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, s)| s.quality_rank)
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            Ok(Some(options.remove(max_idx)))
+        }
+        Quality::Lowest => {
+            let mut min_idx = 0;
+            let mut min_rank = i32::MAX;
+            for (i, s) in options.iter().enumerate() {
+                if s.quality_rank <= min_rank {
+                    min_rank = s.quality_rank;
+                    min_idx = i;
+                }
+            }
+            Ok(Some(options.remove(min_idx)))
+        }
+        Quality::Select => choose_stream(options),
     }
 }
 
@@ -265,5 +282,52 @@ mod tests {
 
         let m3u8_url = "https://example.com/playlist.m3u8";
         assert_eq!(format_hls_player_url(m3u8_url, true), m3u8_url);
+    }
+
+    #[test]
+    fn test_select_stream_by_quality() {
+        use std::collections::HashMap;
+
+        let make_option = |label: &str, rank: i32| StreamOption {
+            provider: "test".to_string(),
+            url: format!("http://test/{label}"),
+            quality_label: label.to_string(),
+            quality_rank: rank,
+            is_hls: true,
+            headers: HashMap::new(),
+            subtitle: None,
+        };
+
+        let options = vec![
+            make_option("1080p", 1080),
+            make_option("720p", 720),
+            make_option("360p", 360),
+        ];
+
+        let highest = select_stream_by_quality(options.clone(), Quality::Highest)
+            .unwrap()
+            .unwrap();
+        assert_eq!(highest.quality_label, "1080p");
+
+        let lowest = select_stream_by_quality(options.clone(), Quality::Lowest)
+            .unwrap()
+            .unwrap();
+        assert_eq!(lowest.quality_label, "360p");
+
+        // Test with options in increasing order (e.g. AnimeHub style before sorting)
+        let inc_options = vec![
+            make_option("360p", 360),
+            make_option("720p", 720),
+            make_option("1080p", 1080),
+        ];
+        let highest_inc = select_stream_by_quality(inc_options.clone(), Quality::Highest)
+            .unwrap()
+            .unwrap();
+        assert_eq!(highest_inc.quality_label, "1080p");
+
+        let lowest_inc = select_stream_by_quality(inc_options.clone(), Quality::Lowest)
+            .unwrap()
+            .unwrap();
+        assert_eq!(lowest_inc.quality_label, "360p");
     }
 }
