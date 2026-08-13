@@ -224,125 +224,138 @@ pub fn format_episode_filename(label: &str) -> String {
     }
 }
 
-pub async fn download_with_ffmpeg(stream: &StreamOption, output_path: &Path) -> Result<()> {
-    let mut cmd = Command::new("ffmpeg");
+async fn run_downloader(
+    bin: &str,
+    args: &[String],
+    label: &str,
+    not_found_hint: &str,
+    output_path: &Path,
+) -> Result<()> {
+    let mut cmd = Command::new(bin);
+    cmd.args(args);
 
-    cmd.arg("-y");
-    cmd.arg("-hide_banner");
-    cmd.arg("-loglevel").arg("error");
-    cmd.arg("-stats");
+    let status = match cmd.status().await {
+        Ok(s) => s,
+        Err(err) => {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                bail!("Downloader binary '{bin}' not found. {not_found_hint}");
+            }
+            return Err(anyhow!(err).context(format!("failed to execute downloader '{label}'")));
+        }
+    };
+
+    if !status.success() {
+        if output_path.exists() {
+            let _ = fs::remove_file(output_path);
+        }
+        bail!("{label} process failed with status {status}");
+    }
+
+    Ok(())
+}
+
+pub async fn download_with_ffmpeg(stream: &StreamOption, output_path: &Path) -> Result<()> {
+    let mut args = vec![
+        "-y".to_string(),
+        "-hide_banner".to_string(),
+        "-loglevel".to_string(),
+        "error".to_string(),
+        "-stats".to_string(),
+    ];
 
     if !stream.headers.is_empty() {
         let mut header_str = String::new();
         for (k, v) in &stream.headers {
             header_str.push_str(&format!("{k}: {v}\r\n"));
         }
-        cmd.arg("-headers").arg(header_str);
+        args.push("-headers".to_string());
+        args.push(header_str);
     }
 
-    cmd.arg("-protocol_whitelist")
-        .arg("file,http,https,tcp,tls,crypto,data");
-    cmd.arg("-allowed_extensions").arg("ALL");
-    cmd.arg("-allowed_segment_extensions").arg("ALL");
-    cmd.arg("-extension_picky").arg("0");
+    args.extend(
+        [
+            "-protocol_whitelist",
+            "file,http,https,tcp,tls,crypto,data",
+            "-allowed_extensions",
+            "ALL",
+            "-allowed_segment_extensions",
+            "ALL",
+            "-extension_picky",
+            "0",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+
     if stream.is_hls {
-        cmd.arg("-f").arg("hls");
-    }
-    cmd.arg("-i").arg(&stream.url);
-    cmd.arg("-c").arg("copy");
-    cmd.arg("-bsf:a").arg("aac_adtstoasc");
-    cmd.arg(output_path);
-
-    let status = match cmd.status().await {
-        Ok(s) => s,
-        Err(err) => {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                bail!(
-                    "Downloader binary 'ffmpeg' not found. Please install ffmpeg or update [download].downloader in config."
-                );
-            }
-            return Err(anyhow!(err).context("failed to execute downloader 'ffmpeg'"));
-        }
-    };
-
-    if !status.success() {
-        if output_path.exists() {
-            let _ = fs::remove_file(output_path);
-        }
-        bail!("ffmpeg process failed with status {status}");
+        args.push("-f".to_string());
+        args.push("hls".to_string());
     }
 
-    Ok(())
+    args.push("-i".to_string());
+    args.push(stream.url.clone());
+    args.push("-c".to_string());
+    args.push("copy".to_string());
+    args.push("-bsf:a".to_string());
+    args.push("aac_adtstoasc".to_string());
+    args.push(output_path.to_string_lossy().to_string());
+
+    run_downloader(
+        "ffmpeg",
+        &args,
+        "ffmpeg",
+        "Please install ffmpeg or update [download].downloader in config.",
+        output_path,
+    )
+    .await
 }
 
 pub async fn download_with_ytdlp(stream: &StreamOption, output_path: &Path) -> Result<()> {
-    let mut cmd = Command::new("yt-dlp");
-
-    cmd.arg("-o").arg(output_path);
-    cmd.arg("--no-playlist");
-
-    for (k, v) in &stream.headers {
-        cmd.arg("--add-headers").arg(format!("{k}:{v}"));
-    }
-
-    cmd.arg(&stream.url);
-
-    let status = match cmd.status().await {
-        Ok(s) => s,
-        Err(err) => {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                bail!(
-                    "Downloader binary 'yt-dlp' not found. Please install yt-dlp or update [download].downloader in config."
-                );
-            }
-            return Err(anyhow!(err).context("failed to execute downloader 'yt-dlp'"));
-        }
-    };
-
-    if !status.success() {
-        if output_path.exists() {
-            let _ = fs::remove_file(output_path);
-        }
-        bail!("yt-dlp process failed with status {status}");
-    }
-
-    Ok(())
+    download_with_ytdlp_internal(stream, output_path, false).await
 }
 
 pub async fn download_with_ytdlp_aria2c(stream: &StreamOption, output_path: &Path) -> Result<()> {
-    let mut cmd = Command::new("yt-dlp");
+    download_with_ytdlp_internal(stream, output_path, true).await
+}
 
-    cmd.arg("-o").arg(output_path);
-    cmd.arg("--no-playlist");
-    cmd.arg("--downloader").arg("aria2c");
-    cmd.arg("--downloader-args").arg("aria2c:-x 16 -s 16 -k 1M");
+async fn download_with_ytdlp_internal(
+    stream: &StreamOption,
+    output_path: &Path,
+    use_aria2c: bool,
+) -> Result<()> {
+    let mut args = vec![
+        "-o".to_string(),
+        output_path.to_string_lossy().to_string(),
+        "--no-playlist".to_string(),
+    ];
+
+    if use_aria2c {
+        args.push("--downloader".to_string());
+        args.push("aria2c".to_string());
+        args.push("--downloader-args".to_string());
+        args.push("aria2c:-x 16 -s 16 -k 1M".to_string());
+    }
 
     for (k, v) in &stream.headers {
-        cmd.arg("--add-headers").arg(format!("{k}:{v}"));
+        args.push("--add-headers".to_string());
+        args.push(format!("{k}:{v}"));
     }
 
-    cmd.arg(&stream.url);
+    args.push(stream.url.clone());
 
-    let status = match cmd.status().await {
-        Ok(s) => s,
-        Err(err) => {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                bail!(
-                    "Downloader binary 'yt-dlp' not found. Please install yt-dlp and aria2c or update [download].downloader in config."
-                );
-            }
-            return Err(anyhow!(err).context("failed to execute downloader 'yt-dlp' with aria2c"));
-        }
+    let (label, hint) = if use_aria2c {
+        (
+            "yt-dlp (with aria2c)",
+            "Please install yt-dlp and aria2c or update [download].downloader in config.",
+        )
+    } else {
+        (
+            "yt-dlp",
+            "Please install yt-dlp or update [download].downloader in config.",
+        )
     };
 
-    if !status.success() {
-        if output_path.exists() {
-            let _ = fs::remove_file(output_path);
-        }
-        bail!("yt-dlp (with aria2c) process failed with status {status}");
-    }
-
-    Ok(())
+    run_downloader("yt-dlp", &args, label, hint, output_path).await
 }
 
 pub async fn download_episode(

@@ -30,13 +30,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
     provider: Provider,
     download_range: Option<String>,
 ) -> Result<()> {
-    let skip_opts = SkipOptions {
-        skip_op: cli.skip_op,
-        skip_ed: cli.skip_ed,
-        skip_mixed_op: cli.skip_mixed_op,
-        skip_mixed_ed: cli.skip_mixed_ed,
-        skip_recap: cli.skip_recap,
-    };
+    let skip_opts = SkipOptions::from(cli);
 
     if history_mode {
         if let Some(entry) = history.select_entry()? {
@@ -371,6 +365,7 @@ pub async fn play_show<P: SyncProvider>(
                 &stream,
                 &show_title,
                 &label,
+                ep_num as usize,
                 mal_id.as_deref(),
                 config,
                 skip_opts,

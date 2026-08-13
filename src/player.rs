@@ -81,11 +81,12 @@ pub async fn launch_player(
     stream: &StreamOption,
     title: &str,
     episode: &str,
+    ep_num: usize,
     mal_id: Option<&str>,
     config: &AppConfig,
     skip_opts: SkipOptions,
 ) -> Result<()> {
-    let debug = std::env::var("ANV_DEBUG").is_ok();
+    let debug = crate::logger::is_debug();
     let player = detect_player(config);
     let mut cmd = build_command(&player)?;
     let media_title = format!("{title} - Episode {episode}");
@@ -96,12 +97,12 @@ pub async fn launch_player(
     cmd.arg(format!("--force-media-title={media_title}"));
 
     if let Some(mid) = mal_id {
-        match prepare_aniskip_args(mid, episode, config, skip_opts).await {
+        match prepare_aniskip_args(mid, ep_num, config, skip_opts).await {
             Ok(args) => {
                 cmd.args(args);
             }
             Err(err) => {
-                eprintln!("[aniskip] error: {err}");
+                crate::dbg_log!("aniskip", "error: {err}");
             }
         }
     }
@@ -127,9 +128,7 @@ pub async fn launch_player(
 
     cmd.arg(&player_url);
 
-    if debug {
-        eprintln!("[ANV_DEBUG] Launching player command: {:?}", cmd);
-    }
+    crate::dbg_log!("player", "Launching player command: {:?}", cmd);
 
     let output = match cmd.output().await {
         Ok(output) => output,
@@ -161,8 +160,8 @@ pub async fn launch_player(
         combined.push_str(stderr.trim());
     }
 
-    if debug && !combined.is_empty() {
-        eprintln!("[ANV_DEBUG] mpv output:\n{combined}");
+    if !combined.is_empty() {
+        crate::dbg_log!("player", "mpv output:\n{combined}");
     }
 
     if !output.status.success() {

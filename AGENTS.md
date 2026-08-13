@@ -27,9 +27,9 @@ search mode, download support, or the `watchlist`/`watching` commands.
     provider-specific one if the site requires a specific browser UA).
   - A `timeout` (15 s is standard).
 - [ ] Implement `Default for <Name>Client` that delegates to `new().expect(…)`.
-- [ ] Add the `dbg_log!` macro (check `std::env::var("ANV_DEBUG").is_ok()`)
-      to every major async step, prefixed with the provider name, e.g.
-      `[anidb]` / `[animehub]`.
+- [ ] Add `dbg_log!` macro calls (from `crate::logger`) to every major async
+      step, prefixed with the provider module name, e.g. `dbg_log!("anidb", ...)`
+      / `dbg_log!("animehub", ...)`.
 - [ ] Implement `AnimeProvider for <Name>Client`:
   - [ ] `search_shows` — return `Vec<ShowInfo>` with correct `id`, `title`,
         `mal_id` (see §4), and `available_eps` (`EpisodeCounts { sub, dub }`).

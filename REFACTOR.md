@@ -8,14 +8,9 @@ feature work.
 
 ## 1. Architecture Debt
 
-### 1.1 No cache expiry / invalidation anywhere
-- **Files:** `src/sync/mal.rs:84-96`, `src/aniskip.rs:103-126`
-- **Problem:** `MalIdCache` entries and `SkipCache` entries are inserted and
-  never evicted. No timestamps, no TTL, no size cap.
-- **Why it matters:** Unbounded growth; stale `show_id → mal_id` mappings outlive
-  provider re-slugging and poison sync/aniskip.
-- **Solution:** Add an `inserted_at` timestamp and prune entries older than N
-  days on load; cap size.
+### 1.1 [PARTIALLY RESOLVED] No cache expiry / invalidation anywhere
+- **Files:** `src/sync/mal.rs:84-96`, `src/aniskip.rs`
+- **Status:** `SkipCache` in `src/aniskip.rs` resolved (added `inserted_at` timestamp, 30-day TTL pruning on load, max 1000 entry cap on save, and compact unindented JSON serialization). `MalIdCache` pending.
 
 ### 1.2 VibeProxy singleton and unbounded session map
 - **Files:** `src/providers/anineko.rs:449,488-500`
@@ -26,30 +21,6 @@ feature work.
 
 
 ## 2. Code Debt
-
-### 2.1 AniSkip HTTP: no timeout, no error_for_status, no retry, per-call client
-- **Files:** `src/aniskip.rs:157-158`
-- **Problem:** `reqwest::Client::builder().user_agent("anv").build()?` has no
-  timeout (reqwest default = none), no `.error_for_status()?`, no retry, and the
-  client is rebuilt per call.
-- **Why it matters:** A hung AniSkip API blocks `launch_player` indefinitely; a
-  4xx/5xx surfaces as a confusing JSON-parse error.
-- **Solution:** Cache the client in a `OnceLock`, set
-  `.timeout(Duration::from_secs(15))`, use the shared browser `USER_AGENT`, add
-  `.error_for_status()?`, and reuse the retry pattern from 2.10.
-
-### 2.2 [REMOVED] Mangapill client had no HTTP timeout (manga providers removed)
-
-### 2.3 AniSkip episode semantics wrong for cumulative labels
-- **Files:** `src/aniskip.rs:134-136`, `src/cmd/anime.rs:584-591`
-- **Problem:** `fetch_skip_times(mid, episode)` uses the raw provider episode
-  label, but labels can be cumulative (e.g. `"30"` = ep 6 of season 4). The sync
-  path already converts to a 1-based index; aniskip doesn't, so it can fetch
-  skip-times for the wrong episode and cache under the wrong key
-  (`"{mal_id}_{label}"`).
-- **Why it matters:** Wrong intro/recap skipping on multi-season shows.
-- **Solution:** Pass the 1-based `ep_num` computed in `play_show` into
-  `prepare_aniskip_args`/`fetch_skip_times`.
 
 ### 2.4 `Translation::Raw`/Dub semantics diverge across providers
 - **Files:** `src/providers/anidb.rs:276-279`, `animehub.rs:223-225,284-286`,
@@ -97,17 +68,6 @@ feature work.
 - **Solution:** Shared `write_http_response(status, reason, content_type, body)`
   with a correct reason-phrase map, used by both.
 
-### 2.8 Debug-logging has 3 competing conventions
-- **Files:** `src/providers/anidb.rs:14-20`, `animehub.rs:15-21`, `senshi.rs:34,83,210,284,326`,
-  `anineko.rs`, `src/player.rs:90,132-134`, `src/aniskip.rs:137-151`
-- **Problem:** `dbg_log!` macro copy-pasted in 2 files; Senshi repeats
-  `std::env::var("ANV_DEBUG").is_ok()` + `eprintln!` ~7 times; player/aniskip
-  inline-gate; anineko/mangadex/mangapill log nothing.
-- **Why it matters:** AGENTS.md mandates `dbg_log!` everywhere; the style drift
-  makes debugging harder.
-- **Solution:** Single shared `dbg_log!("<provider>", ...)` in `mod.rs` (or a
-  `pub(crate) fn dbg_log(prefix, args)`); migrate senshi/anineko/player/aniskip.
-
 ### 2.9 Fragile / unanchored regexes
 - **Files:** `src/providers/anidb.rs:412`, `anineko.rs:346,408`, `animehub.rs:332`
 - **Problem:** (a) `myanimelist\.net/anime/([0-9]+)` matches the first MAL link
@@ -119,10 +79,9 @@ feature work.
 - **Solution:** Anchor patterns to DOM context; prefer the `RESOLUTION=` HLS
   parse (2.6) over NAME-based; `regex::escape` any URL built from constants.
 
-### 2.10 Retry logic exists in only 2 of 6 providers, incompatible
-- **Files:** `src/providers/animehub.rs:38-70`, `mangadex.rs:45-70`
-- **Problem:** animehub: 5 attempts/2s, retries server errors; mangadex: 3
-  attempts, only on 429. Others have none.
+### 2.10 Retry logic exists in only 1 of 4 providers, incompatible
+- **Files:** `src/providers/animehub.rs:38-70`
+- **Problem:** animehub: 5 attempts/2s, retries server errors; others have none.
 - **Why it matters:** Flaky-provider behavior differs per provider; unify so
   fixes (e.g. 2.1) share one implementation.
 - **Solution:** Generic `fetch_with_retry(client, builder, attempts, backoff,
@@ -134,16 +93,6 @@ feature work.
   (incl. the subtle referer double-arg special case).
 - **Why it matters:** Header fixes must be applied twice.
 - **Solution:** `fn apply_header_args(cmd, headers)`.
-
-### 2.12 Downloader: three functions 95% identical
-- **Files:** `src/downloader.rs:228-280,282-314,316-350`
-- **Problem:** `download_with_ffmpeg`/`download_with_ytdlp`/
-  `download_with_ytdlp_aria2c` share the status-check → `NotFound` bail →
-  cleanup epilogue; the ytdlp variants differ only in 2 args.
-- **Why it matters:** Fixing the epilogue (e.g. partial-file cleanup) requires
-  triple edits.
-- **Solution:** One `run_downloader(bin, args, hint)` for spawn/status/cleanup;
-  build the arg list per engine.
 
 ### 2.13 Regexes recompiled on every request
 - **Files:** `src/providers/anidb.rs:99-102,147-154,300-301,335,412`,
@@ -199,14 +148,6 @@ feature work.
   extraction) in `fetch_episodes` and `fetch_streams`.
 - **Why it matters:** Slug fixes must be applied twice.
 - **Solution:** `build_show_url(identifier, translation)` + `slug_from_identifier`.
-
-### 2.19 Manga chapter sorting duplicates utils.rs
-- **Files:** `src/providers/mangadex.rs:158-165`, `mangapill.rs:105-112`,
-  `src/utils.rs:6-19`
-- **Problem:** Both providers reimplement parse-numeric-label + sort + dedup,
-  while `utils.rs` already exports `parse_episode_key`/`sorted_episode_labels`.
-- **Why it matters:** Sort semantics can drift between providers and the cmd layer.
-- **Solution:** Reuse `crate::utils` helpers.
 
 ### 2.20 Remaining small duplications
 - **Files:** `src/cmd/anime.rs:37-43` vs `src/cmd/sync.rs:52-58` (SkipOptions

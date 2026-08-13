@@ -4,6 +4,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use url::Url;
 
+use crate::dbg_log;
 use crate::providers::AnimeProvider;
 use crate::types::{EpisodeCounts, ShowInfo, StreamOption, Translation};
 
@@ -31,10 +32,7 @@ impl SenshiClient {
         url: &str,
         payload: Option<&serde_json::Value>,
     ) -> Result<T> {
-        let debug = std::env::var("ANV_DEBUG").is_ok();
-        if debug {
-            eprintln!("[ANV_DEBUG] Senshi request: {method} {url}");
-        }
+        dbg_log!("senshi", "request: {method} {url}");
 
         let mut req = self
             .client
@@ -52,9 +50,7 @@ impl SenshiClient {
             .with_context(|| format!("Senshi request to {url} failed"))?;
         let status = resp.status();
         if !status.is_success() {
-            if debug {
-                eprintln!("[ANV_DEBUG] Senshi request to {url} failed with HTTP status {status}");
-            }
+            dbg_log!("senshi", "request to {url} failed with HTTP status {status}");
             bail!("Senshi request to {url} failed with status {status}");
         }
 
@@ -62,17 +58,16 @@ impl SenshiClient {
             .text()
             .await
             .with_context(|| format!("failed to read Senshi response from {url}"))?;
-        if debug {
-            eprintln!(
-                "[ANV_DEBUG] Senshi response from {url} (len={}): {}",
-                raw_text.len(),
-                if raw_text.len() > 500 {
-                    &raw_text[..500]
-                } else {
-                    &raw_text
-                }
-            );
-        }
+        dbg_log!(
+            "senshi",
+            "response from {url} (len={}): {}",
+            raw_text.len(),
+            if raw_text.len() > 500 {
+                &raw_text[..500]
+            } else {
+                &raw_text
+            }
+        );
 
         let data = serde_json::from_str::<T>(&raw_text)
             .with_context(|| format!("failed to parse Senshi JSON from {url}"))?;
@@ -80,23 +75,16 @@ impl SenshiClient {
     }
 
     async fn resolve_senshi_subtitle(&self, item: &EmbedItem) -> Option<String> {
-        let debug = std::env::var("ANV_DEBUG").is_ok();
         let manifest_url = senshi_subtitle_manifest_url(item)?;
-        if debug {
-            eprintln!("[ANV_DEBUG] Senshi subtitle manifest_url: {manifest_url}");
-        }
+        dbg_log!("senshi", "subtitle manifest_url: {manifest_url}");
         let tracks: Vec<SenshiSubtitleTrack> = self
             .fetch_json(reqwest::Method::GET, &manifest_url, None)
             .await
             .ok()?;
 
-        if debug {
-            eprintln!("[ANV_DEBUG] Senshi subtitle tracks count: {}", tracks.len());
-        }
+        dbg_log!("senshi", "subtitle tracks count: {}", tracks.len());
         let selected = pick_senshi_subtitle_track(&tracks)?;
-        if debug {
-            eprintln!("[ANV_DEBUG] Senshi selected subtitle track: {selected}");
-        }
+        dbg_log!("senshi", "selected subtitle track: {selected}");
         Some(self.prepare_senshi_subtitle(&selected).await)
     }
 
@@ -207,7 +195,6 @@ struct SenshiSubtitleTrack {
 
 impl AnimeProvider for SenshiClient {
     async fn search_shows(&self, query: &str, _translation: Translation) -> Result<Vec<ShowInfo>> {
-        let debug = std::env::var("ANV_DEBUG").is_ok();
         let query = query.trim();
         if query.is_empty() {
             bail!("empty search query");
@@ -224,12 +211,7 @@ impl AnimeProvider for SenshiClient {
             .fetch_json(reqwest::Method::POST, &url, Some(&payload))
             .await?;
 
-        if debug {
-            eprintln!(
-                "[ANV_DEBUG] Senshi search_shows results count: {}",
-                resp.data.len()
-            );
-        }
+        dbg_log!("senshi", "search_shows results count: {}", resp.data.len());
 
         if resp.data.is_empty() {
             bail!("no results for '{query}'");
@@ -251,12 +233,12 @@ impl AnimeProvider for SenshiClient {
 
             let ep_count = parse_episode_count(&item.ani_episodes).unwrap_or(0);
 
-            if debug {
-                eprintln!(
-                    "[ANV_DEBUG]   show id={} title='{}' ep_count={ep_count}",
-                    item.id, title
-                );
-            }
+            dbg_log!(
+                "senshi",
+                "  show id={} title='{}' ep_count={ep_count}",
+                item.id,
+                title
+            );
 
             shows.push(ShowInfo {
                 id: item.id.to_string(),
@@ -281,17 +263,11 @@ impl AnimeProvider for SenshiClient {
         show_id: &str,
         _translation: Translation,
     ) -> Result<Vec<String>> {
-        let debug = std::env::var("ANV_DEBUG").is_ok();
         let mal_id = parse_mal_id(show_id)?;
         let url = format!("{}/episodes/{}", BASE_URL, mal_id);
         let episodes: Vec<EpisodeItem> = self.fetch_json(reqwest::Method::GET, &url, None).await?;
 
-        if debug {
-            eprintln!(
-                "[ANV_DEBUG] Senshi fetch_episodes mal_id={mal_id} count={}",
-                episodes.len()
-            );
-        }
+        dbg_log!("senshi", "fetch_episodes mal_id={mal_id} count={}", episodes.len());
 
         if episodes.is_empty() {
             bail!("no episodes found for mal id {mal_id}");
@@ -310,9 +286,7 @@ impl AnimeProvider for SenshiClient {
         }
 
         let result: Vec<String> = seen.into_iter().map(|n| n.to_string()).collect();
-        if debug {
-            eprintln!("[ANV_DEBUG] Senshi parsed episodes: {:?}", result);
-        }
+        dbg_log!("senshi", "parsed episodes: {:?}", result);
 
         Ok(result)
     }
@@ -323,7 +297,6 @@ impl AnimeProvider for SenshiClient {
         translation: Translation,
         episode: &str,
     ) -> Result<Vec<StreamOption>> {
-        let debug = std::env::var("ANV_DEBUG").is_ok();
         let mal_id = parse_mal_id(show_id)?;
         let ep_no: usize = episode
             .parse()
@@ -332,18 +305,21 @@ impl AnimeProvider for SenshiClient {
         let url = format!("{}/episode-embeds/{}/{}", BASE_URL, mal_id, ep_no);
         let embeds: Vec<EmbedItem> = self.fetch_json(reqwest::Method::GET, &url, None).await?;
 
-        if debug {
-            eprintln!(
-                "[ANV_DEBUG] Senshi fetch_streams mal_id={mal_id} ep_no={ep_no} translation={} embeds_count={}",
-                translation.as_str(),
-                embeds.len()
+        dbg_log!(
+            "senshi",
+            "fetch_streams mal_id={mal_id} ep_no={ep_no} translation={} embeds_count={}",
+            translation.as_str(),
+            embeds.len()
+        );
+        for (i, item) in embeds.iter().enumerate() {
+            dbg_log!(
+                "senshi",
+                "  embed[{i}] status='{}' url='{}' serverFM={:?} masked_base_url='{}'",
+                item.status,
+                item.url,
+                item.server_fm,
+                item.masked_base_url
             );
-            for (i, item) in embeds.iter().enumerate() {
-                eprintln!(
-                    "[ANV_DEBUG]   embed[{i}] status='{}' url='{}' serverFM={:?} masked_base_url='{}'",
-                    item.status, item.url, item.server_fm, item.masked_base_url
-                );
-            }
         }
 
         if embeds.is_empty() {
@@ -358,21 +334,18 @@ impl AnimeProvider for SenshiClient {
             };
 
             if !matches_status {
-                if debug {
-                    eprintln!(
-                        "[ANV_DEBUG]   skipping embed status='{}' (wanted translation={})",
-                        item.status,
-                        translation.as_str()
-                    );
-                }
+                dbg_log!(
+                    "senshi",
+                    "  skipping embed status='{}' (wanted translation={})",
+                    item.status,
+                    translation.as_str()
+                );
                 continue;
             }
 
             let stream_url = item.url.trim().to_string();
             if stream_url.is_empty() {
-                if debug {
-                    eprintln!("[ANV_DEBUG]   skipping embed with empty URL");
-                }
+                dbg_log!("senshi", "  skipping embed with empty URL");
                 continue;
             }
 
@@ -398,12 +371,11 @@ impl AnimeProvider for SenshiClient {
         }
 
         if streams.is_empty() {
-            if debug {
-                eprintln!(
-                    "[ANV_DEBUG] Senshi fetch_streams: 0 streams matched status filter for translation {}",
-                    translation.as_str()
-                );
-            }
+            dbg_log!(
+                "senshi",
+                "fetch_streams: 0 streams matched status filter for translation {}",
+                translation.as_str()
+            );
             bail!(
                 "no {} streams found for episode {}",
                 translation.as_str(),
@@ -411,12 +383,7 @@ impl AnimeProvider for SenshiClient {
             );
         }
 
-        if debug {
-            eprintln!(
-                "[ANV_DEBUG] Senshi returning {} stream option(s)",
-                streams.len()
-            );
-        }
+        dbg_log!("senshi", "returning {} stream option(s)", streams.len());
 
         Ok(streams)
     }

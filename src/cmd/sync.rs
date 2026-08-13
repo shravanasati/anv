@@ -48,13 +48,7 @@ pub async fn run_mal_list(
 
     let theme = theme();
 
-    let skip_opts = SkipOptions {
-        skip_op: cli.skip_op,
-        skip_ed: cli.skip_ed,
-        skip_mixed_op: cli.skip_mixed_op,
-        skip_mixed_ed: cli.skip_mixed_ed,
-        skip_recap: cli.skip_recap,
-    };
+    let skip_opts = SkipOptions::from(cli);
 
     let timeout_secs = cli.timeout.unwrap_or(config.timeout);
     let search_timeout = Duration::from_secs(timeout_secs);

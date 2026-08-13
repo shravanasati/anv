@@ -45,6 +45,9 @@ pub struct AppConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AniskipConfig {
+    #[serde(default = "default_timeout")]
+    pub timeout: u64,
+
     #[serde(default = "default_true")]
     pub skip_op: bool,
 
@@ -142,6 +145,7 @@ const CONFIG_HEADER: &str = "# anv configuration
 #   enabled -- set to true to sync watch status to MAL after each episode
 #
 # [aniskip]
+#   timeout       -- timeout in seconds for aniskip HTTP requests (default: 15)
 #   skip_op       -- skip opening (default: true)
 #   skip_ed       -- skip ending (default: true)
 #   skip_mixed_op -- skip mixed opening (default: false)
@@ -162,6 +166,7 @@ const CONFIG_HEADER: &str = "# anv configuration
 impl Default for AniskipConfig {
     fn default() -> Self {
         Self {
+            timeout: default_timeout(),
             skip_op: true,
             skip_ed: true,
             skip_mixed_op: false,
@@ -346,5 +351,18 @@ timeout = 30
 "#;
         let custom_config: AppConfig = toml::from_str(custom_toml).unwrap();
         assert_eq!(custom_config.timeout, 30);
+    }
+
+    #[test]
+    fn test_aniskip_timeout_config_deserialization() {
+        let default_config: AppConfig = toml::from_str("").unwrap();
+        assert_eq!(default_config.aniskip.timeout, 15);
+
+        let custom_toml = r#"
+[aniskip]
+timeout = 5
+"#;
+        let custom_config: AppConfig = toml::from_str(custom_toml).unwrap();
+        assert_eq!(custom_config.aniskip.timeout, 5);
     }
 }

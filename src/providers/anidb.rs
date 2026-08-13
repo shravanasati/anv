@@ -5,19 +5,11 @@ use std::collections::HashMap;
 use std::time::Duration;
 use url::Url;
 
+use crate::dbg_log;
 use crate::providers::{AnimeProvider, USER_AGENT};
 use crate::types::{EpisodeCounts, ShowInfo, StreamOption, Translation};
 
 pub const ANIDB_BASE_URL: &str = "https://anidb.app";
-
-/// Emit a debug line to stderr only when `ANV_DEBUG` is set in the environment.
-macro_rules! dbg_log {
-    ($($arg:tt)*) => {
-        if std::env::var("ANV_DEBUG").is_ok() {
-            eprintln!("[anidb] {}", format!($($arg)*));
-        }
-    };
-}
 
 fn decode_html_entities(s: &str) -> String {
     s.replace("&quot;", "\"")
@@ -80,7 +72,7 @@ impl AnimeProvider for AnidbClient {
     async fn search_shows(&self, query: &str, _translation: Translation) -> Result<Vec<ShowInfo>> {
         // Primary: use the search suggestions endpoint (stable HTML structure with alt attribute)
         let suggestions_url = format!("{ANIDB_BASE_URL}/search/suggestions");
-        dbg_log!("search_shows: GET {suggestions_url}?q={query}");
+        dbg_log!("anidb", "search_shows: GET {suggestions_url}?q={query}");
         let suggestions_response = self
             .client
             .get(&suggestions_url)
@@ -91,6 +83,7 @@ impl AnimeProvider for AnidbClient {
             .text()
             .await?;
         dbg_log!(
+            "anidb",
             "search_shows: suggestions response ({} bytes)",
             suggestions_response.len()
         );
@@ -118,6 +111,7 @@ impl AnimeProvider for AnidbClient {
         }
 
         dbg_log!(
+            "anidb",
             "search_shows: found {} results from suggestions endpoint",
             shows.len()
         );
@@ -127,6 +121,7 @@ impl AnimeProvider for AnidbClient {
         if shows.is_empty() {
             let browse_url = format!("{ANIDB_BASE_URL}/browse");
             dbg_log!(
+                "anidb",
                 "search_shows: suggestions empty, falling back to browse: GET {browse_url}?q={query}"
             );
             let browse_response = self
@@ -139,6 +134,7 @@ impl AnimeProvider for AnidbClient {
                 .text()
                 .await?;
             dbg_log!(
+                "anidb",
                 "search_shows: browse response ({} bytes)",
                 browse_response.len()
             );
@@ -192,7 +188,7 @@ impl AnimeProvider for AnidbClient {
     ) -> Result<Vec<String>> {
         let num_id = Self::extract_numeric_id(show_id)?;
         let url = format!("{ANIDB_BASE_URL}/api/frontend/anime/{num_id}/episodes");
-        dbg_log!("fetch_episodes: GET {url}");
+        dbg_log!("anidb", "fetch_episodes: GET {url}");
 
         let resp: AnidbEpisodesResponse = self
             .client
@@ -203,7 +199,7 @@ impl AnimeProvider for AnidbClient {
             .json()
             .await?;
         let eps = resp.episodes;
-        dbg_log!("fetch_episodes: got {} episode items", eps.len());
+        dbg_log!("anidb", "fetch_episodes: got {} episode items", eps.len());
 
         let mut ep_numbers: Vec<usize> = eps.into_iter().map(|e| e.number).collect();
         ep_numbers.sort_unstable();
@@ -220,7 +216,7 @@ impl AnimeProvider for AnidbClient {
     ) -> Result<Vec<StreamOption>> {
         let num_id = Self::extract_numeric_id(show_id)?;
         let ep_list_url = format!("{ANIDB_BASE_URL}/api/frontend/anime/{num_id}/episodes");
-        dbg_log!("fetch_streams: GET episodes {ep_list_url}");
+        dbg_log!("anidb", "fetch_streams: GET episodes {ep_list_url}");
 
         let resp: AnidbEpisodesResponse = self
             .client
@@ -232,6 +228,7 @@ impl AnimeProvider for AnidbClient {
             .await?;
         let eps = resp.episodes;
         dbg_log!(
+            "anidb",
             "fetch_streams: {} episode items, looking for ep={episode}",
             eps.len()
         );
@@ -245,6 +242,7 @@ impl AnimeProvider for AnidbClient {
             .find(|e| e.number == ep_num)
             .ok_or_else(|| anyhow!("episode {episode} not found for show {show_id}"))?;
         dbg_log!(
+            "anidb",
             "fetch_streams: matched ep id={} number={}",
             target_ep.id,
             target_ep.number
@@ -254,7 +252,7 @@ impl AnimeProvider for AnidbClient {
             "{ANIDB_BASE_URL}/api/frontend/episode/{}/languages",
             target_ep.id
         );
-        dbg_log!("fetch_streams: GET languages {lang_url}");
+        dbg_log!("anidb", "fetch_streams: GET languages {lang_url}");
         let lang_resp: AnidbLanguagesResponse = self
             .client
             .get(&lang_url)
@@ -264,8 +262,9 @@ impl AnimeProvider for AnidbClient {
             .json()
             .await?;
         let langs = lang_resp.languages;
-        dbg_log!("fetch_streams: {} language items available", langs.len());
+        dbg_log!("anidb", "fetch_streams: {} language items available", langs.len());
         dbg_log!(
+            "anidb",
             "fetch_streams: language codes = {:?}",
             langs
                 .iter()
@@ -277,7 +276,7 @@ impl AnimeProvider for AnidbClient {
             Translation::Dub => "eng",
             _ => "jpn",
         };
-        dbg_log!("fetch_streams: target lang={target_lang}");
+        dbg_log!("anidb", "fetch_streams: target lang={target_lang}");
 
         let embed_url = langs
             .iter()
@@ -285,7 +284,7 @@ impl AnimeProvider for AnidbClient {
             .or_else(|| langs.first())
             .and_then(|l| l.embed_url.as_deref())
             .ok_or_else(|| anyhow!("no embed URL found for episode {episode} ({target_lang})"))?;
-        dbg_log!("fetch_streams: embed_url={embed_url}");
+        dbg_log!("anidb", "fetch_streams: embed_url={embed_url}");
 
         let embed_page = self
             .client
@@ -295,7 +294,7 @@ impl AnimeProvider for AnidbClient {
             .error_for_status()?
             .text()
             .await?;
-        dbg_log!("fetch_streams: embed page ({} bytes)", embed_page.len());
+        dbg_log!("anidb", "fetch_streams: embed page ({} bytes)", embed_page.len());
 
         let re_file = regex::Regex::new(r#"file:\s*['"]([^'"]+\.m3u8[^'"]*)['"]"#).unwrap();
         let re_file_generic = regex::Regex::new(r#"(https?://[^\s'"]+\.m3u8[^\s'"]*)"#).unwrap();
@@ -310,12 +309,13 @@ impl AnimeProvider for AnidbClient {
             })
             .ok_or_else(|| {
                 dbg_log!(
+                    "anidb",
                     "fetch_streams: failed to find m3u8 in embed page. embed page snippet:\n{}",
                     &embed_page[..embed_page.len().min(2000)]
                 );
                 anyhow!("failed to extract m3u8 stream URL from embed page")
             })?;
-        dbg_log!("fetch_streams: master m3u8={master_m3u8}");
+        dbg_log!("anidb", "fetch_streams: master m3u8={master_m3u8}");
 
         let m3u8_content = self
             .client
@@ -326,7 +326,7 @@ impl AnimeProvider for AnidbClient {
             .text()
             .await
             .unwrap_or_default();
-        dbg_log!("fetch_streams: m3u8 content ({} bytes)", m3u8_content.len());
+        dbg_log!("anidb", "fetch_streams: m3u8 content ({} bytes)", m3u8_content.len());
 
         let base_url = Url::parse(&master_m3u8).ok();
         let mut streams = Vec::new();
@@ -377,7 +377,7 @@ impl AnimeProvider for AnidbClient {
         }
 
         if streams.is_empty() {
-            dbg_log!("fetch_streams: no quality variants parsed, using master m3u8 directly");
+            dbg_log!("anidb", "fetch_streams: no quality variants parsed, using master m3u8 directly");
             let mut headers = HashMap::new();
             headers.insert("Referer".to_string(), ANIDB_BASE_URL.to_string());
 
@@ -393,7 +393,7 @@ impl AnimeProvider for AnidbClient {
         } else {
             streams.sort_by(|a, b| b.quality_rank.cmp(&a.quality_rank));
         }
-        dbg_log!("fetch_streams: returning {} stream options", streams.len());
+        dbg_log!("anidb", "fetch_streams: returning {} stream options", streams.len());
 
         Ok(streams)
     }

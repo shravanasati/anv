@@ -7,18 +7,11 @@ use scraper::{Html, Selector};
 use serde::Deserialize;
 use url::Url;
 
+use crate::dbg_log;
 use crate::providers::{AnimeProvider, USER_AGENT};
 use crate::types::{EpisodeCounts, ShowInfo, StreamOption, Translation};
 
 pub const ANIMEHUB_BASE_URL: &str = "https://123animehub.cc";
-
-macro_rules! dbg_log {
-    ($($arg:tt)*) => {
-        if std::env::var("ANV_DEBUG").is_ok() {
-            eprintln!("[animehub] {}", format!($($arg)*));
-        }
-    };
-}
 
 #[derive(Debug, Clone)]
 pub struct AnimehubClient {
@@ -51,7 +44,7 @@ impl AnimehubClient {
                 Ok(resp) => {
                     let status = resp.status();
                     if status.is_server_error() {
-                        dbg_log!("fetch attempt {attempt} failed with status {status}");
+                        dbg_log!("animehub", "fetch attempt {attempt} failed with status {status}");
                         last_err = Some(anyhow!("server error status {status}"));
                         continue;
                     }
@@ -61,7 +54,7 @@ impl AnimehubClient {
                     return resp.text().await.context("failed to read response text");
                 }
                 Err(e) => {
-                    dbg_log!("fetch attempt {attempt} error: {e}");
+                    dbg_log!("animehub", "fetch attempt {attempt} error: {e}");
                     last_err = Some(anyhow!(e));
                 }
             }

@@ -7,6 +7,7 @@ mod cmd;
 mod config;
 mod downloader;
 mod history;
+mod logger;
 mod player;
 mod providers;
 mod sync;
