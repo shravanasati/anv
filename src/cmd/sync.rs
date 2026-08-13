@@ -6,7 +6,8 @@ use crate::cmd::anime::{play_show, select_show_with_provider};
 use crate::config::AppConfig;
 use crate::history::{History, theme};
 use crate::providers::{
-    AnimeProvider, anidb::AnidbClient, anineko::AninekoClient, senshi::SenshiClient,
+    AnimeProvider, anidb::AnidbClient, animehub::AnimehubClient, anineko::AninekoClient,
+    senshi::SenshiClient,
 };
 use crate::sync::mal::{MalClient, MalToken, MalWatchlistEntry};
 use crate::types::{EpisodeCounts, Provider, ShowInfo, Translation};
@@ -30,7 +31,7 @@ pub async fn run_mal_list(
 ) -> Result<()> {
     if !provider.is_anime() {
         bail!(
-            "Provider '{}' does not support anime. Valid anime providers: all, anidb, anineko, senshi",
+            "Provider '{}' does not support anime. Valid anime providers: all, anidb, animehub, anineko, senshi",
             provider.display_name()
         );
     }
@@ -99,6 +100,7 @@ pub async fn run_mal_list(
 
         if provider == Provider::All {
             let anidb_client = AnidbClient::new().ok();
+            let animehub_client = AnimehubClient::new().ok();
             let anineko_client = AninekoClient::new().ok();
             let senshi_client = SenshiClient::new().ok();
 
@@ -110,9 +112,19 @@ pub async fn run_mal_list(
                     search_query
                 );
 
-                let (anidb_shows, anineko_shows, senshi_shows) = tokio::join!(
+                let (anidb_shows, animehub_shows, anineko_shows, senshi_shows) = tokio::join!(
                     async {
                         if let Some(ref client) = anidb_client {
+                            client
+                                .search_shows(&search_query, translation)
+                                .await
+                                .unwrap_or_default()
+                        } else {
+                            Vec::new()
+                        }
+                    },
+                    async {
+                        if let Some(ref client) = animehub_client {
                             client
                                 .search_shows(&search_query, translation)
                                 .await
@@ -146,6 +158,9 @@ pub async fn run_mal_list(
                 let mut combined = Vec::new();
                 for show in anidb_shows {
                     combined.push((Provider::Anidb, show));
+                }
+                for show in animehub_shows {
+                    combined.push((Provider::Animehub, show));
                 }
                 for show in anineko_shows {
                     combined.push((Provider::Anineko, show));
@@ -187,6 +202,26 @@ pub async fn run_mal_list(
                             history_path,
                             translation,
                             Provider::Anidb,
+                            show,
+                            episode.clone(),
+                            entry.num_episodes_watched.map(|n| n.to_string()),
+                            auto_play_next,
+                            Some(mal_client),
+                            binge,
+                            config,
+                            skip_opts,
+                            download_range.clone(),
+                        )
+                        .await;
+                    }
+                    Provider::Animehub => {
+                        let client = AnimehubClient::new()?;
+                        return play_show(
+                            &client,
+                            history,
+                            history_path,
+                            translation,
+                            Provider::Animehub,
                             show,
                             episode.clone(),
                             entry.num_episodes_watched.map(|n| n.to_string()),
@@ -274,6 +309,26 @@ pub async fn run_mal_list(
                     )
                     .await;
                 }
+                Provider::Animehub => {
+                    let client = AnimehubClient::new()?;
+                    return play_show(
+                        &client,
+                        history,
+                        history_path,
+                        translation,
+                        Provider::Animehub,
+                        show,
+                        episode.clone(),
+                        entry.num_episodes_watched.map(|n| n.to_string()),
+                        auto_play_next,
+                        Some(mal_client),
+                        binge,
+                        config,
+                        skip_opts,
+                        download_range.clone(),
+                    )
+                    .await;
+                }
                 Provider::Anineko => {
                     let client = AninekoClient::new()?;
                     return play_show(
@@ -330,6 +385,10 @@ pub async fn run_mal_list(
             let results = match provider {
                 Provider::Anidb => {
                     let client = AnidbClient::new()?;
+                    client.search_shows(&search_query, translation).await?
+                }
+                Provider::Animehub => {
+                    let client = AnimehubClient::new()?;
                     client.search_shows(&search_query, translation).await?
                 }
                 Provider::Anineko => {
@@ -417,6 +476,26 @@ pub async fn run_mal_list(
                     history_path,
                     translation,
                     Provider::Anidb,
+                    show,
+                    episode.clone(),
+                    entry.num_episodes_watched.map(|n| n.to_string()),
+                    auto_play_next,
+                    Some(mal_client),
+                    binge,
+                    config,
+                    skip_opts,
+                    download_range.clone(),
+                )
+                .await;
+            }
+            Provider::Animehub => {
+                let client = AnimehubClient::new()?;
+                return play_show(
+                    &client,
+                    history,
+                    history_path,
+                    translation,
+                    Provider::Animehub,
                     show,
                     episode.clone(),
                     entry.num_episodes_watched.map(|n| n.to_string()),

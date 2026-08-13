@@ -124,3 +124,29 @@ pub fn history_path() -> Result<PathBuf> {
 pub fn theme() -> ColorfulTheme {
     ColorfulTheme::default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deserialize_history_with_unknown_provider() {
+        let json_data = r#"{
+            "entries": [
+                {
+                    "show_id": "test-id",
+                    "show_title": "Test Show",
+                    "episode": "1",
+                    "translation": "sub",
+                    "provider": "future_provider",
+                    "is_manga": false,
+                    "watched_at": "2026-08-13T12:00:00Z"
+                }
+            ]
+        }"#;
+
+        let history: History = serde_json::from_str(json_data).expect("failed to deserialize history JSON");
+        assert_eq!(history.entries.len(), 1);
+        assert_eq!(history.entries[0].provider, Provider::Unknown);
+    }
+}

@@ -11,8 +11,9 @@ use crate::config::AppConfig;
 use crate::history::{History, HistoryEntry, theme};
 use crate::player::{choose_stream, launch_player, select_stream_by_quality};
 use crate::providers::{
-    AnimeProvider, MangaProvider, anidb::AnidbClient, anineko::AninekoClient,
-    mangadex::MangaDexClient, mangapill::MangapillClient, senshi::SenshiClient,
+    AnimeProvider, MangaProvider, anidb::AnidbClient, animehub::AnimehubClient,
+    anineko::AninekoClient, mangadex::MangaDexClient, mangapill::MangapillClient,
+    senshi::SenshiClient,
 };
 use crate::sync::SyncProvider;
 use crate::types::{ChapterCounts, EpisodeCounts, MangaInfo, Provider, ShowInfo, Translation};
@@ -52,14 +53,12 @@ pub async fn run_anime_flow<P: SyncProvider>(
                     bail!("The --download / -D flag is currently only supported for anime streaming.");
                 }
                 match target_provider {
-                    Provider::Anidb => {
-                        bail!("Provider 'AniDB' does not support manga.");
-                    }
-                    Provider::Anineko => {
-                        bail!("Provider 'AniNeko' does not support manga.");
-                    }
-                    Provider::Senshi => {
-                        bail!("Provider 'Senshi' does not support manga.");
+                    Provider::Anidb
+                    | Provider::Animehub
+                    | Provider::Anineko
+                    | Provider::Senshi
+                    | Provider::Unknown => {
+                        bail!("Provider '{}' does not support manga.", target_provider.display_name());
                     }
                     Provider::All | Provider::Mangadex => {
                         let client = MangaDexClient::new()?;
@@ -126,6 +125,44 @@ pub async fn run_anime_flow<P: SyncProvider>(
                 }
             } else {
                 match target_provider {
+                    Provider::Animehub => {
+                        let client = AnimehubClient::new()?;
+                        let show_info = if target_provider == entry.provider {
+                            ShowInfo {
+                                id: entry.show_id.clone(),
+                                title: entry.show_title.clone(),
+                                mal_id: None,
+                                available_eps: EpisodeCounts::default(),
+                            }
+                        } else {
+                            resolve_show_info(&client, &entry.show_title, entry.translation).await?
+                        };
+                        play_show(
+                            &client,
+                            history,
+                            history_path,
+                            entry.translation,
+                            Provider::Animehub,
+                            show_info,
+                            if auto_play_next {
+                                None
+                            } else {
+                                Some(entry.episode.clone())
+                            },
+                            if auto_play_next {
+                                Some(entry.episode.clone())
+                            } else {
+                                None
+                            },
+                            auto_play_next,
+                            sync_provider,
+                            binge,
+                            config,
+                            skip_opts,
+                            download_range.clone(),
+                        )
+                        .await?;
+                    }
                     Provider::Anineko => {
                         let client = AninekoClient::new()?;
                         let show_info = if target_provider == entry.provider {
@@ -263,6 +300,38 @@ pub async fn run_anime_flow<P: SyncProvider>(
     let theme = theme();
 
     match provider {
+        Provider::Animehub => {
+            let client = AnimehubClient::new()?;
+            let shows = client.search_shows(&query, translation).await?;
+            if shows.is_empty() {
+                bail!(
+                    "No results for \"{}\" ({}) on AnimeHub",
+                    query,
+                    translation.label()
+                );
+            }
+            let show = select_show(&shows, translation, &theme)?;
+            let Some(show) = show else {
+                return Ok(());
+            };
+            play_show(
+                &client,
+                history,
+                history_path,
+                translation,
+                Provider::Animehub,
+                show,
+                cli.episode.clone(),
+                None,
+                auto_play_next,
+                sync_provider,
+                binge,
+                config,
+                skip_opts,
+                download_range.clone(),
+            )
+            .await
+        }
         Provider::Senshi => {
             let client = SenshiClient::new()?;
             let shows = client.search_shows(&query, translation).await?;
@@ -361,14 +430,25 @@ pub async fn run_anime_flow<P: SyncProvider>(
         }
         Provider::All => {
             let anidb_client = AnidbClient::new().ok();
+            let animehub_client = AnimehubClient::new().ok();
             let anineko_client = AninekoClient::new().ok();
             let senshi_client = SenshiClient::new().ok();
 
             println!("Searching across all anime providers for \"{}\"...", query);
 
-            let (anidb_shows, anineko_shows, senshi_shows) = tokio::join!(
+            let (anidb_shows, animehub_shows, anineko_shows, senshi_shows) = tokio::join!(
                 async {
                     if let Some(ref client) = anidb_client {
+                        client
+                            .search_shows(&query, translation)
+                            .await
+                            .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    }
+                },
+                async {
+                    if let Some(ref client) = animehub_client {
                         client
                             .search_shows(&query, translation)
                             .await
@@ -403,6 +483,9 @@ pub async fn run_anime_flow<P: SyncProvider>(
             for show in anidb_shows {
                 combined.push((Provider::Anidb, show));
             }
+            for show in animehub_shows {
+                combined.push((Provider::Animehub, show));
+            }
             for show in anineko_shows {
                 combined.push((Provider::Anineko, show));
             }
@@ -429,6 +512,27 @@ pub async fn run_anime_flow<P: SyncProvider>(
                         history_path,
                         translation,
                         Provider::Anidb,
+                        show,
+                        cli.episode.clone(),
+                        None,
+                        auto_play_next,
+                        sync_provider,
+                        binge,
+                        config,
+                        skip_opts,
+                        download_range.clone(),
+                    )
+                    .await
+                }
+                Provider::Animehub => {
+                    let client = animehub_client
+                        .expect("AnimeHub client must be present if item was selected");
+                    play_show(
+                        &client,
+                        history,
+                        history_path,
+                        translation,
+                        Provider::Animehub,
                         show,
                         cli.episode.clone(),
                         None,

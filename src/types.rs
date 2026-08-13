@@ -102,16 +102,25 @@ pub enum Provider {
     #[serde(alias = "allanime")]
     Anidb,
     Anineko,
+    #[serde(alias = "123animehub")]
+    Animehub,
     Mangadex,
     Mangapill,
     Senshi,
+    #[value(skip)]
+    #[serde(other)]
+    Unknown,
 }
 
 impl Provider {
     pub fn is_anime(self) -> bool {
         matches!(
             self,
-            Provider::All | Provider::Anidb | Provider::Anineko | Provider::Senshi
+            Provider::All
+                | Provider::Anidb
+                | Provider::Anineko
+                | Provider::Animehub
+                | Provider::Senshi
         )
     }
 
@@ -127,9 +136,11 @@ impl Provider {
             Provider::All => "All Providers",
             Provider::Anidb => "AniDB",
             Provider::Anineko => "AniNeko",
+            Provider::Animehub => "AnimeHub",
             Provider::Mangadex => "MangaDex",
             Provider::Mangapill => "Mangapill",
             Provider::Senshi => "Senshi",
+            Provider::Unknown => "Unknown",
         }
     }
 }
@@ -142,5 +153,11 @@ mod tests {
     fn test_allanime_deserialization_alias() {
         let p: Provider = serde_json::from_str("\"allanime\"").unwrap();
         assert_eq!(p, Provider::Anidb);
+    }
+
+    #[test]
+    fn test_unknown_provider_deserialization_fallback() {
+        let p: Provider = serde_json::from_str("\"future_provider\"").unwrap();
+        assert_eq!(p, Provider::Unknown);
     }
 }

@@ -91,6 +91,8 @@ pub struct MalIdCache {
     anidb_entries: HashMap<String, u32>,
     #[serde(default)]
     anineko_entries: HashMap<String, u32>,
+    #[serde(default)]
+    animehub_entries: HashMap<String, u32>,
 }
 
 impl MalIdCache {
@@ -114,6 +116,7 @@ impl MalIdCache {
         match provider {
             Provider::Anidb => self.anidb_entries.get(show_id).copied(),
             Provider::Anineko => self.anineko_entries.get(show_id).copied(),
+            Provider::Animehub => self.animehub_entries.get(show_id).copied(),
             // Senshi uses MAL IDs as show IDs natively — no cache lookup needed.
             _ => None,
         }
@@ -125,6 +128,7 @@ impl MalIdCache {
         let map = match provider {
             Provider::Anidb => &self.anidb_entries,
             Provider::Anineko => &self.anineko_entries,
+            Provider::Animehub => &self.animehub_entries,
             _ => return None,
         };
         map.iter()
@@ -144,6 +148,9 @@ impl MalIdCache {
             }
             Provider::Anineko => {
                 self.anineko_entries.insert(show_id.to_string(), mal_id);
+            }
+            Provider::Animehub => {
+                self.animehub_entries.insert(show_id.to_string(), mal_id);
             }
             // Senshi uses MAL IDs as show IDs — nothing to cache.
             _ => {}

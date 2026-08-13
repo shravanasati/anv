@@ -104,7 +104,13 @@ pub async fn launch_player(
             cmd.arg(format!("--http-header-fields={}: {value}", key));
         }
     }
-    cmd.arg(&stream.url);
+    if stream.is_hls {
+        cmd.arg("--demuxer-lavf-format=hls");
+    }
+
+    let player_url = format_hls_player_url(&stream.url, stream.is_hls);
+
+    cmd.arg(&player_url);
 
     if debug {
         eprintln!("[ANV_DEBUG] Launching player command: {:?}", cmd);
@@ -217,7 +223,9 @@ pub async fn launch_image_viewer(
 fn add_direct_url_args(cmd: &mut Command, pages: &[Page]) {
     if let Some(first) = pages.first() {
         for (key, value) in &first.headers {
-            if key.eq_ignore_ascii_case("referer") {
+            if key.eq_ignore_ascii_case("user-agent") {
+                cmd.arg(format!("--user-agent={value}"));
+            } else if key.eq_ignore_ascii_case("referer") {
                 cmd.arg(format!("--referrer={value}"));
                 cmd.arg(format!("--http-header-fields=Referer: {value}"));
             } else {
@@ -227,5 +235,35 @@ fn add_direct_url_args(cmd: &mut Command, pages: &[Page]) {
     }
     for page in pages {
         cmd.arg(&page.url);
+    }
+}
+
+pub fn format_hls_player_url(url: &str, is_hls: bool) -> String {
+    if is_hls && !url.contains(".m3u8") {
+        if url.contains('#') {
+            format!("{url}.m3u8")
+        } else {
+            format!("{url}#.m3u8")
+        }
+    } else {
+        url.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_hls_player_url() {
+        let raw_url = "https://imgcdn44.dpopdrop89.store/cdn/092e3d2d1473";
+        let formatted = format_hls_player_url(raw_url, true);
+        assert_eq!(
+            formatted,
+            "https://imgcdn44.dpopdrop89.store/cdn/092e3d2d1473#.m3u8"
+        );
+
+        let m3u8_url = "https://example.com/playlist.m3u8";
+        assert_eq!(format_hls_player_url(m3u8_url, true), m3u8_url);
     }
 }

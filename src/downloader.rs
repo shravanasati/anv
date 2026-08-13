@@ -249,6 +249,9 @@ pub async fn download_with_ffmpeg(stream: &StreamOption, output_path: &Path) -> 
         .arg("ALL");
     cmd.arg("-extension_picky")
         .arg("0");
+    if stream.is_hls {
+        cmd.arg("-f").arg("hls");
+    }
     cmd.arg("-i").arg(&stream.url);
     cmd.arg("-c").arg("copy");
     cmd.arg("-bsf:a").arg("aac_adtstoasc");
