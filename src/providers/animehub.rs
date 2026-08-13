@@ -95,7 +95,13 @@ impl AnimeProvider for AnimehubClient {
         let total_sel =
             Selector::parse("span.total").map_err(|e| anyhow!("invalid total selector: {e}"))?;
         let pages: usize = match doc.select(&total_sel).next() {
-            Some(el) => el.text().collect::<String>().trim().parse().unwrap_or(0),
+            Some(el) => el
+                .text()
+                .collect::<String>()
+                .trim()
+                .parse::<usize>()
+                .unwrap_or(0)
+                .min(2),
             None => 0,
         };
 

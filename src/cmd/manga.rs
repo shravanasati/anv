@@ -10,7 +10,10 @@ use crate::history::{History, HistoryEntry, theme};
 use crate::player::launch_image_viewer;
 use crate::providers::{MangaProvider, mangadex::MangaDexClient, mangapill::MangapillClient};
 use crate::types::{MangaInfo, Provider, Translation};
-use crate::utils::{next_episode_label_presorted, sorted_episode_labels};
+use crate::utils::{
+    next_episode_label_presorted, search_opt_with_timeout, search_single_with_timeout,
+    sorted_episode_labels,
+};
 
 const INITIAL_MANGA_PAGE_PRELOAD: usize = 5;
 
@@ -37,10 +40,19 @@ pub async fn run_manga_flow(
     let query = cli.query.join(" ");
     let theme = theme();
 
+    let timeout_secs = cli.timeout.unwrap_or(config.timeout);
+    let search_timeout = std::time::Duration::from_secs(timeout_secs);
+
     match cli.provider {
         Provider::Mangadex => {
             let client = MangaDexClient::new()?;
-            let mangas = client.search_mangas(&query, translation).await?;
+            let mangas = search_single_with_timeout(
+                search_timeout,
+                "MangaDex",
+                timeout_secs,
+                client.search_mangas(&query, translation),
+            )
+            .await?;
             if mangas.is_empty() {
                 bail!(
                     "No results for \"{}\" ({}) on MangaDex",
@@ -68,7 +80,13 @@ pub async fn run_manga_flow(
         }
         Provider::Mangapill => {
             let client = MangapillClient::new()?;
-            let mangas = client.search_mangas(&query, translation).await?;
+            let mangas = search_single_with_timeout(
+                search_timeout,
+                "Mangapill",
+                timeout_secs,
+                client.search_mangas(&query, translation),
+            )
+            .await?;
             if mangas.is_empty() {
                 bail!(
                     "No results for \"{}\" ({}) on Mangapill",
@@ -100,28 +118,37 @@ pub async fn run_manga_flow(
 
             println!("Searching across all manga providers for \"{}\"...", query);
 
-            let (mangadex_mangas, mangapill_mangas) = tokio::join!(
-                async {
-                    if let Some(ref client) = mangadex {
-                        client
-                            .search_mangas(&query, translation)
-                            .await
-                            .unwrap_or_default()
-                    } else {
-                        Vec::new()
-                    }
-                },
-                async {
-                    if let Some(ref client) = mangapill {
-                        client
-                            .search_mangas(&query, translation)
-                            .await
-                            .unwrap_or_default()
-                    } else {
-                        Vec::new()
-                    }
-                },
+            let ((mangadex_mangas, mangadex_to), (mangapill_mangas, mangapill_to)) = tokio::join!(
+                search_opt_with_timeout(
+                    mangadex
+                        .as_ref()
+                        .map(|c| c.search_mangas(&query, translation)),
+                    search_timeout
+                ),
+                search_opt_with_timeout(
+                    mangapill
+                        .as_ref()
+                        .map(|c| c.search_mangas(&query, translation)),
+                    search_timeout
+                ),
             );
+
+            let attempted_count = [mangadex.is_some(), mangapill.is_some()]
+                .iter()
+                .filter(|&&b| b)
+                .count();
+
+            let timed_out_count = [mangadex_to, mangapill_to]
+                .iter()
+                .filter(|&&b| b)
+                .count();
+
+            if attempted_count > 0 && timed_out_count * 2 >= attempted_count {
+                eprintln!(
+                    "Warning: {} of {} providers timed out after {}s. Try increasing search timeout with `-T <seconds>` (e.g. `-T 30`).",
+                    timed_out_count, attempted_count, timeout_secs
+                );
+            }
 
             let mut combined = Vec::new();
             for manga in mangadex_mangas {

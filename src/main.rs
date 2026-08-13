@@ -55,6 +55,10 @@ pub struct Cli {
     )]
     pub provider: Provider,
 
+    /// Timeout in seconds for provider search requests (overrides config).
+    #[arg(short = 'T', long, value_name = "SECONDS")]
+    pub timeout: Option<u64>,
+
     /// Override the directory used to cache manga page images.
     #[arg(short = 'C', long, value_name = "DIR")]
     pub cache_dir: Option<PathBuf>,

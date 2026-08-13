@@ -18,6 +18,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub auto_play_next: bool,
 
+    /// Timeout in seconds for provider search requests (default: 15).
+    #[serde(default = "default_timeout")]
+    pub timeout: u64,
+
     /// When true, prefer English titles over the original title when displaying
     /// anime in search results, watchlists, and watching menus.
     #[serde(default)]
@@ -113,6 +117,10 @@ fn default_player() -> String {
     "mpv".to_string()
 }
 
+fn default_timeout() -> u64 {
+    15
+}
+
 fn default_true() -> bool {
     true
 }
@@ -132,6 +140,9 @@ const CONFIG_HEADER: &str = "# anv configuration
 #
 # auto_play_next -- set to true to automatically resume from the next episode
 #                  instead of the last watched episode in history/watchlist
+#
+# timeout        -- timeout in seconds for provider search requests (default: 15)
+#                  can also be overridden per-command with the -T / --timeout flag
 #
 # prefer_english_titles -- set to true to prefer English titles over the original
 #                         title in search results, watchlists, and watching menus
@@ -182,6 +193,7 @@ impl Default for AppConfig {
             player: default_player(),
             binge: false,
             auto_play_next: false,
+            timeout: default_timeout(),
             prefer_english_titles: false,
             mal: MalConfig::default(),
             sync: SyncConfig::default(),
@@ -338,5 +350,17 @@ downloader = "ytdlp+aria2c"
 "#;
         let config: AppConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.download.downloader, DownloaderEngine::YtdlpAria2c);
+    }
+
+    #[test]
+    fn test_timeout_config_deserialization() {
+        let default_config: AppConfig = toml::from_str("").unwrap();
+        assert_eq!(default_config.timeout, 15);
+
+        let custom_toml = r#"
+timeout = 30
+"#;
+        let custom_config: AppConfig = toml::from_str(custom_toml).unwrap();
+        assert_eq!(custom_config.timeout, 30);
     }
 }

@@ -17,7 +17,10 @@ use crate::providers::{
 };
 use crate::sync::SyncProvider;
 use crate::types::{ChapterCounts, EpisodeCounts, MangaInfo, Provider, ShowInfo, Translation};
-use crate::utils::{next_episode_label_presorted, sorted_episode_labels};
+use crate::utils::{
+    next_episode_label_presorted, search_opt_with_timeout, search_single_with_timeout,
+    sorted_episode_labels,
+};
 
 pub async fn run_anime_flow<P: SyncProvider>(
     cli: &Cli,
@@ -299,10 +302,19 @@ pub async fn run_anime_flow<P: SyncProvider>(
     let query = cli.query.join(" ");
     let theme = theme();
 
+    let timeout_secs = cli.timeout.unwrap_or(config.timeout);
+    let search_timeout = std::time::Duration::from_secs(timeout_secs);
+
     match provider {
         Provider::Animehub => {
             let client = AnimehubClient::new()?;
-            let shows = client.search_shows(&query, translation).await?;
+            let shows = search_single_with_timeout(
+                search_timeout,
+                "AnimeHub",
+                timeout_secs,
+                client.search_shows(&query, translation),
+            )
+            .await?;
             if shows.is_empty() {
                 bail!(
                     "No results for \"{}\" ({}) on AnimeHub",
@@ -334,7 +346,13 @@ pub async fn run_anime_flow<P: SyncProvider>(
         }
         Provider::Senshi => {
             let client = SenshiClient::new()?;
-            let shows = client.search_shows(&query, translation).await?;
+            let shows = search_single_with_timeout(
+                search_timeout,
+                "Senshi",
+                timeout_secs,
+                client.search_shows(&query, translation),
+            )
+            .await?;
             if shows.is_empty() {
                 bail!(
                     "No results for \"{}\" ({}) on Senshi",
@@ -366,7 +384,13 @@ pub async fn run_anime_flow<P: SyncProvider>(
         }
         Provider::Anineko => {
             let client = AninekoClient::new()?;
-            let shows = client.search_shows(&query, translation).await?;
+            let shows = search_single_with_timeout(
+                search_timeout,
+                "AniNeko",
+                timeout_secs,
+                client.search_shows(&query, translation),
+            )
+            .await?;
             if shows.is_empty() {
                 bail!(
                     "No results for \"{}\" ({}) on AniNeko",
@@ -398,7 +422,13 @@ pub async fn run_anime_flow<P: SyncProvider>(
         }
         Provider::Anidb => {
             let client = AnidbClient::new()?;
-            let shows = client.search_shows(&query, translation).await?;
+            let shows = search_single_with_timeout(
+                search_timeout,
+                "AniDB",
+                timeout_secs,
+                client.search_shows(&query, translation),
+            )
+            .await?;
             if shows.is_empty() {
                 bail!(
                     "No results for \"{}\" ({}) on AniDB",
@@ -436,48 +466,59 @@ pub async fn run_anime_flow<P: SyncProvider>(
 
             println!("Searching across all anime providers for \"{}\"...", query);
 
-            let (anidb_shows, animehub_shows, anineko_shows, senshi_shows) = tokio::join!(
-                async {
-                    if let Some(ref client) = anidb_client {
-                        client
-                            .search_shows(&query, translation)
-                            .await
-                            .unwrap_or_default()
-                    } else {
-                        Vec::new()
-                    }
-                },
-                async {
-                    if let Some(ref client) = animehub_client {
-                        client
-                            .search_shows(&query, translation)
-                            .await
-                            .unwrap_or_default()
-                    } else {
-                        Vec::new()
-                    }
-                },
-                async {
-                    if let Some(ref client) = anineko_client {
-                        client
-                            .search_shows(&query, translation)
-                            .await
-                            .unwrap_or_default()
-                    } else {
-                        Vec::new()
-                    }
-                },
-                async {
-                    if let Some(ref client) = senshi_client {
-                        client
-                            .search_shows(&query, translation)
-                            .await
-                            .unwrap_or_default()
-                    } else {
-                        Vec::new()
-                    }
-                },
+            let (
+                (anidb_shows, anidb_to),
+                (animehub_shows, animehub_to),
+                (anineko_shows, anineko_to),
+                (senshi_shows, senshi_to),
+            ) = tokio::join!(
+                search_opt_with_timeout(
+                    anidb_client
+                        .as_ref()
+                        .map(|c| c.search_shows(&query, translation)),
+                    search_timeout
+                ),
+                search_opt_with_timeout(
+                    animehub_client
+                        .as_ref()
+                        .map(|c| c.search_shows(&query, translation)),
+                    search_timeout
+                ),
+                search_opt_with_timeout(
+                    anineko_client
+                        .as_ref()
+                        .map(|c| c.search_shows(&query, translation)),
+                    search_timeout
+                ),
+                search_opt_with_timeout(
+                    senshi_client
+                        .as_ref()
+                        .map(|c| c.search_shows(&query, translation)),
+                    search_timeout
+                ),
             );
+
+            let attempted_count = [
+                anidb_client.is_some(),
+                animehub_client.is_some(),
+                anineko_client.is_some(),
+                senshi_client.is_some(),
+            ]
+            .iter()
+            .filter(|&&b| b)
+            .count();
+
+            let timed_out_count = [anidb_to, animehub_to, anineko_to, senshi_to]
+                .iter()
+                .filter(|&&b| b)
+                .count();
+
+            if attempted_count > 0 && timed_out_count * 2 >= attempted_count {
+                eprintln!(
+                    "Warning: {} of {} providers timed out after {}s. Try increasing search timeout with `-T <seconds>` (e.g. `-T 30`).",
+                    timed_out_count, attempted_count, timeout_secs
+                );
+            }
 
             let mut combined = Vec::new();
             for show in anidb_shows {
