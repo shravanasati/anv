@@ -194,7 +194,12 @@ where
             chosen.label,
             cfg.unit_plural,
         ) {
-            Some(next) => current = next,
+            Some(next) => {
+                current = next;
+                if binge {
+                    skip_selection = true;
+                }
+            }
             None => return Ok(()),
         }
     }
@@ -291,3 +296,86 @@ fn advance_current(
         (false, candidate) => Some(candidate.unwrap_or(chosen)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    #[test]
+    fn test_advance_current() {
+        assert_eq!(
+            advance_current(true, Some("2".to_string()), "1".to_string(), "episodes"),
+            Some("2".to_string())
+        );
+        assert_eq!(
+            advance_current(true, None, "10".to_string(), "episodes"),
+            None
+        );
+        assert_eq!(
+            advance_current(false, Some("2".to_string()), "1".to_string(), "episodes"),
+            Some("2".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_binge_mode_auto_plays_all_episodes() {
+        let history_path = std::env::temp_dir().join("anv_test_binge_history.json");
+        let mut history = History::default();
+
+        let items = vec![
+            MediaEntry {
+                id: "1".to_string(),
+                label: "1".to_string(),
+            },
+            MediaEntry {
+                id: "2".to_string(),
+                label: "2".to_string(),
+            },
+            MediaEntry {
+                id: "3".to_string(),
+                label: "3".to_string(),
+            },
+        ];
+
+        let consumed_count = Arc::new(AtomicU32::new(0));
+        let consumed_count_clone = consumed_count.clone();
+
+        let res = run_media_loop(
+            "Test Anime",
+            items,
+            None,
+            None,
+            true, // auto_play_next: starts at ep 1 with skip_selection = true
+            true, // binge: should auto play all 3 episodes
+            &mut history,
+            &history_path,
+            Translation::Sub,
+            Provider::Senshi,
+            false,
+            MediaLoopConfig {
+                select_prompt: "Select",
+                use_fuzzy: false,
+                unit_plural: "episodes",
+                unit_singular: "episode",
+                last_verb: "watched",
+            },
+            |_entry, _ctx| {
+                let count = consumed_count_clone.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    Ok(ConsumeOutcome::Consumed)
+                }
+            },
+        )
+        .await;
+
+        let _ = std::fs::remove_file(history_path);
+
+        assert!(res.is_ok());
+        assert_eq!(consumed_count.load(Ordering::SeqCst), 3);
+    }
+}
+
+
