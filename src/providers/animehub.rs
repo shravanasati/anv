@@ -63,6 +63,28 @@ impl AnimehubClient {
     }
 }
 
+fn resolve_show_url_and_slug(show_id: &str, translation: Translation) -> (String, String) {
+    let mut identifier = show_id.to_string();
+    if translation == Translation::Dub && !identifier.ends_with("-dub") {
+        identifier.push_str("-dub");
+    }
+
+    let anime_url = if identifier.starts_with('/') {
+        format!("{ANIMEHUB_BASE_URL}{identifier}")
+    } else {
+        format!("{ANIMEHUB_BASE_URL}/{identifier}")
+    };
+
+    let slug = identifier
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(&identifier)
+        .to_string();
+
+    (anime_url, slug)
+}
+
 impl Default for AnimehubClient {
     fn default() -> Self {
         Self::new().expect("failed to build Animehub HTTP client")
@@ -208,22 +230,7 @@ impl AnimeProvider for AnimehubClient {
     }
 
     async fn fetch_episodes(&self, show_id: &str, translation: Translation) -> Result<Vec<String>> {
-        let mut identifier = show_id.to_string();
-        if translation == Translation::Dub && !identifier.ends_with("-dub") {
-            identifier.push_str("-dub");
-        }
-
-        let anime_url = if identifier.starts_with('/') {
-            format!("{ANIMEHUB_BASE_URL}{identifier}")
-        } else {
-            format!("{ANIMEHUB_BASE_URL}/{identifier}")
-        };
-
-        let slug = identifier
-            .trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .unwrap_or(&identifier);
+        let (anime_url, slug) = resolve_show_url_and_slug(show_id, translation);
 
         let ep_api_url = format!("{ANIMEHUB_BASE_URL}/ajax/film/sv?id={slug}");
         let req = self.client.get(&ep_api_url).header("Referer", &anime_url);
@@ -266,22 +273,7 @@ impl AnimeProvider for AnimehubClient {
         translation: Translation,
         episode: &str,
     ) -> Result<Vec<StreamOption>> {
-        let mut identifier = show_id.to_string();
-        if translation == Translation::Dub && !identifier.ends_with("-dub") {
-            identifier.push_str("-dub");
-        }
-
-        let anime_url = if identifier.starts_with('/') {
-            format!("{ANIMEHUB_BASE_URL}{identifier}")
-        } else {
-            format!("{ANIMEHUB_BASE_URL}/{identifier}")
-        };
-
-        let slug = identifier
-            .trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .unwrap_or(&identifier);
+        let (anime_url, slug) = resolve_show_url_and_slug(show_id, translation);
 
         let server = 0;
         let ep_info_url =
@@ -489,5 +481,21 @@ mod tests {
             episodes.push(ep_num_str.to_string());
         }
         assert_eq!(episodes, vec!["1", "2", "3"]);
+    }
+
+    #[test]
+    fn test_resolve_show_url_and_slug() {
+        let (url_sub, slug_sub) = resolve_show_url_and_slug("naruto-shippuden", Translation::Sub);
+        assert_eq!(url_sub, "https://123animehub.cc/naruto-shippuden");
+        assert_eq!(slug_sub, "naruto-shippuden");
+
+        let (url_dub, slug_dub) = resolve_show_url_and_slug("/v/naruto-shippuden", Translation::Dub);
+        assert_eq!(url_dub, "https://123animehub.cc/v/naruto-shippuden-dub");
+        assert_eq!(slug_dub, "naruto-shippuden-dub");
+
+        let (url_dub_exists, slug_dub_exists) =
+            resolve_show_url_and_slug("naruto-shippuden-dub", Translation::Dub);
+        assert_eq!(url_dub_exists, "https://123animehub.cc/naruto-shippuden-dub");
+        assert_eq!(slug_dub_exists, "naruto-shippuden-dub");
     }
 }

@@ -110,16 +110,7 @@ pub async fn launch_player(
     if let Some(sub) = &stream.subtitle {
         cmd.arg(format!("--sub-file={sub}"));
     }
-    for (key, value) in &stream.headers {
-        if key.eq_ignore_ascii_case("user-agent") {
-            cmd.arg(format!("--user-agent={value}"));
-        } else if key.eq_ignore_ascii_case("referer") {
-            cmd.arg(format!("--referrer={value}"));
-            cmd.arg(format!("--http-header-fields=Referer: {value}"));
-        } else {
-            cmd.arg(format!("--http-header-fields={}: {value}", key));
-        }
-    }
+    apply_header_args(&mut cmd, &stream.headers);
     if stream.is_hls {
         cmd.arg("--demuxer-lavf-format=hls");
     }
@@ -178,6 +169,19 @@ pub async fn launch_player(
 }
 
 
+
+pub fn apply_header_args(cmd: &mut Command, headers: &std::collections::HashMap<String, String>) {
+    for (key, value) in headers {
+        if key.eq_ignore_ascii_case("user-agent") {
+            cmd.arg(format!("--user-agent={value}"));
+        } else if key.eq_ignore_ascii_case("referer") {
+            cmd.arg(format!("--referrer={value}"));
+            cmd.arg(format!("--http-header-fields=Referer: {value}"));
+        } else {
+            cmd.arg(format!("--http-header-fields={key}: {value}"));
+        }
+    }
+}
 
 pub fn format_hls_player_url(url: &str, is_hls: bool) -> String {
     if is_hls && !url.contains(".m3u8") {
@@ -253,5 +257,27 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(lowest_inc.quality_label, "360p");
+    }
+
+    #[test]
+    fn test_apply_header_args() {
+        let mut cmd = Command::new("mpv");
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("User-Agent".to_string(), "TestUA/1.0".to_string());
+        headers.insert("Referer".to_string(), "https://example.com/ref".to_string());
+        headers.insert("X-Custom-Header".to_string(), "custom_val".to_string());
+
+        apply_header_args(&mut cmd, &headers);
+
+        let args: Vec<String> = cmd
+            .as_std()
+            .get_args()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(args.contains(&"--user-agent=TestUA/1.0".to_string()));
+        assert!(args.contains(&"--referrer=https://example.com/ref".to_string()));
+        assert!(args.contains(&"--http-header-fields=Referer: https://example.com/ref".to_string()));
+        assert!(args.contains(&"--http-header-fields=X-Custom-Header: custom_val".to_string()));
     }
 }

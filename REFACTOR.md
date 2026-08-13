@@ -87,13 +87,6 @@ feature work.
 - **Solution:** Generic `fetch_with_retry(client, builder, attempts, backoff,
   retryable_predicate)` in `mod.rs`.
 
-### 2.11 player.rs header→mpv-arg mapping duplicated
-- **Files:** `src/player.rs:114-123` vs `src/player.rs:241-252`
-- **Problem:** Identical `user-agent`/`referer`/`http-header-fields` translation
-  (incl. the subtle referer double-arg special case).
-- **Why it matters:** Header fixes must be applied twice.
-- **Solution:** `fn apply_header_args(cmd, headers)`.
-
 ### 2.13 Regexes recompiled on every request
 - **Files:** `src/providers/anidb.rs:99-102,147-154,300-301,335,412`,
   `animehub.rs:119,332,389`, `anineko.rs:133,217,227-228,294,301,328,346,408`
@@ -141,13 +134,6 @@ feature work.
   `Provider::display_name()`.
 - **Solution:** Use `Provider::display_name()` everywhere; embed host can be
   appended to the URL/label if needed.
-
-### 2.18 Intra-file duplication in animehub
-- **Files:** `src/providers/animehub.rs:222-237` vs `283-298`
-- **Problem:** Identical 15-line block (dub-slug suffix, URL build, slug
-  extraction) in `fetch_episodes` and `fetch_streams`.
-- **Why it matters:** Slug fixes must be applied twice.
-- **Solution:** `build_show_url(identifier, translation)` + `slug_from_identifier`.
 
 ### 2.20 Remaining small duplications
 - **Files:** `src/cmd/anime.rs:37-43` vs `src/cmd/sync.rs:52-58` (SkipOptions
