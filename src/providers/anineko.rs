@@ -4,7 +4,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, LazyLock, Mutex, OnceLock},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -12,12 +12,29 @@ use tokio::{
 };
 use url::Url;
 
-use crate::providers::AnimeProvider;
-use crate::types::{EpisodeCounts, ShowInfo, StreamOption, Translation};
+use crate::providers::{
+    AUTO_QUALITY_LABEL, AUTO_QUALITY_RANK, AnimeProvider, parse_quality_rank,
+};
+use crate::types::{EpisodeCounts, Provider, ShowInfo, StreamOption, Translation};
 
 const BASE_URL: &str = "https://anineko.to";
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const PNG_IEND_MARKER: &[u8] = &[0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82];
+
+static RE_EP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"/ep-(\d+)"#).unwrap());
+static RE_WATCH_SLUG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"/watch/([^/?#]+)"#).unwrap());
+static RE_MARKER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"data-id="(hsub|sub|dub)""#).unwrap());
+static RE_VIDEO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"data-video="([^"]+)""#).unwrap());
+static RE_SUB: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"const subtitle = "([^"]+)""#).unwrap());
+static RE_TRACK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"file:\s*"([^"]+\.(?:vtt|ass|srt))""#).unwrap());
+static RE_MASTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"const src = "(https?://[^"]+/master\.m3u8)""#).unwrap());
+static RE_VARIANT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?m)^#EXT-X-STREAM-INF:.*NAME="([^"]+)".*\r?\n([^\r\n#]+)"#).unwrap()
+});
+static RE_PUBLIC_MASTER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"const src = "(https?://[^"]+/public/stream/[^"]+/master\.m3u8)""#).unwrap()
+});
+
 
 #[derive(Debug, Clone)]
 pub struct AninekoClient {
@@ -130,10 +147,9 @@ impl AnimeProvider for AninekoClient {
         let referer = format!("{}/", BASE_URL);
         let html = self.fetch_string(&watch_url, &referer).await?;
 
-        let re_ep = Regex::new(r#"/ep-(\d+)"#).unwrap();
         let mut seen = std::collections::BTreeSet::new();
 
-        for cap in re_ep.captures_iter(&html) {
+        for cap in RE_EP.captures_iter(&html) {
             if let Ok(ep_num) = cap[1].parse::<usize>() {
                 if ep_num > 0 {
                     seen.insert(ep_num);
@@ -214,8 +230,7 @@ impl AnimeProvider for AninekoClient {
 }
 
 pub fn slug_from_watch_url(watch_path: &str) -> Option<String> {
-    let re = Regex::new(r#"/watch/([^/?#]+)"#).unwrap();
-    re.captures(watch_path).map(|c| c[1].trim().to_string())
+    RE_WATCH_SLUG.captures(watch_path).map(|c| c[1].trim().to_string())
 }
 
 pub fn extract_lang_embed_urls(html: &str) -> HashMap<String, Vec<String>> {
@@ -224,12 +239,9 @@ pub fn extract_lang_embed_urls(html: &str) -> HashMap<String, Vec<String>> {
     groups.insert("sub".to_string(), Vec::new());
     groups.insert("dub".to_string(), Vec::new());
 
-    let re_marker = Regex::new(r#"data-id="(hsub|sub|dub)""#).unwrap();
-    let re_video = Regex::new(r#"data-video="([^"]+)""#).unwrap();
-
-    let matches: Vec<_> = re_marker.find_iter(html).collect();
+    let matches: Vec<_> = RE_MARKER.find_iter(html).collect();
     for (i, m) in matches.iter().enumerate() {
-        let lang_match = re_marker.captures(m.as_str()).unwrap();
+        let lang_match = RE_MARKER.captures(m.as_str()).unwrap();
         let lang = lang_match[1].to_string();
         let start = m.end();
         let end = if i + 1 < matches.len() {
@@ -240,7 +252,7 @@ pub fn extract_lang_embed_urls(html: &str) -> HashMap<String, Vec<String>> {
         let block = &html[start..end];
 
         let mut seen = std::collections::HashSet::new();
-        for vcap in re_video.captures_iter(block) {
+        for vcap in RE_VIDEO.captures_iter(block) {
             let embed_url = vcap[1].trim().to_string();
             if !embed_url.is_empty() && seen.insert(embed_url.clone()) {
                 groups.entry(lang.clone()).or_default().push(embed_url);
@@ -291,15 +303,13 @@ pub fn subtitle_from_embed_url(embed_url: &str) -> Option<String> {
 }
 
 pub fn subtitle_from_embed_html(html: &str) -> Option<String> {
-    let re_sub = Regex::new(r#"const subtitle = "([^"]+)""#).unwrap();
-    if let Some(cap) = re_sub.captures(html) {
+    if let Some(cap) = RE_SUB.captures(html) {
         let s = cap[1].trim();
         if !s.is_empty() {
             return Some(s.to_string());
         }
     }
-    let re_track = Regex::new(r#"file:\s*"([^"]+\.(?:vtt|ass|srt))""#).unwrap();
-    if let Some(cap) = re_track.captures(html) {
+    if let Some(cap) = RE_TRACK.captures(html) {
         let s = cap[1].trim();
         if !s.is_empty() {
             return Some(s.to_string());
@@ -325,8 +335,7 @@ async fn resolve_bibiemb(client: &Client, embed_url: &str) -> Result<Vec<StreamO
         .text()
         .await?;
 
-    let re_master = Regex::new(r#"const src = "(https?://[^"]+/master\.m3u8)""#).unwrap();
-    let cap = re_master
+    let cap = RE_MASTER
         .captures(&html)
         .ok_or_else(|| anyhow!("bibiemb master m3u8 not found"))?;
     let master_url = cap[1].to_string();
@@ -342,30 +351,22 @@ async fn resolve_bibiemb(client: &Client, embed_url: &str) -> Result<Vec<StreamO
         .text()
         .await?;
 
-    let re_variant =
-        Regex::new(r#"(?m)^#EXT-X-STREAM-INF:.*NAME="([^"]+)".*\r?\n([^\r\n#]+)"#).unwrap();
     let mut streams = Vec::new();
 
     let base = Url::parse(&master_url)?;
 
-    for vcap in re_variant.captures_iter(&playlist) {
+    for vcap in RE_VARIANT.captures_iter(&playlist) {
         let name = vcap[1].trim().to_string();
         let rel_url = vcap[2].trim();
         let abs_url = base.join(rel_url)?.to_string();
 
-        let rank = match name.as_str() {
-            "1080p" => 1080,
-            "720p" => 720,
-            "480p" => 480,
-            "360p" => 360,
-            _ => 0,
-        };
+        let rank = parse_quality_rank(&name);
 
         let mut headers = HashMap::new();
         headers.insert("Referer".to_string(), embed_url.to_string());
 
         streams.push(StreamOption {
-            provider: "bibiemb".to_string(),
+            provider: Provider::Anineko.display_name().to_string(),
             url: abs_url,
             quality_label: name,
             quality_rank: rank,
@@ -380,10 +381,10 @@ async fn resolve_bibiemb(client: &Client, embed_url: &str) -> Result<Vec<StreamO
         headers.insert("Referer".to_string(), embed_url.to_string());
 
         streams.push(StreamOption {
-            provider: "bibiemb".to_string(),
+            provider: Provider::Anineko.display_name().to_string(),
             url: master_url,
-            quality_label: "auto".to_string(),
-            quality_rank: 0,
+            quality_label: AUTO_QUALITY_LABEL.to_string(),
+            quality_rank: AUTO_QUALITY_RANK,
             is_hls: true,
             headers,
             subtitle,
@@ -404,9 +405,7 @@ async fn resolve_vibeplayer(client: &Client, embed_url: &str) -> Result<Vec<Stre
         .text()
         .await?;
 
-    let re_master =
-        Regex::new(r#"const src = "(https?://[^"]+/public/stream/[^"]+/master\.m3u8)""#).unwrap();
-    let cap = re_master
+    let cap = RE_PUBLIC_MASTER
         .captures(&html)
         .ok_or_else(|| anyhow!("vibeplayer master m3u8 not found"))?;
     let master_url = cap[1].to_string();
@@ -420,10 +419,10 @@ async fn resolve_vibeplayer(client: &Client, embed_url: &str) -> Result<Vec<Stre
     headers.insert("Referer".to_string(), embed_url.to_string());
 
     Ok(vec![StreamOption {
-        provider: "vibeplayer".to_string(),
+        provider: Provider::Anineko.display_name().to_string(),
         url: proxy_url,
-        quality_label: "auto".to_string(),
-        quality_rank: 0,
+        quality_label: AUTO_QUALITY_LABEL.to_string(),
+        quality_rank: AUTO_QUALITY_RANK,
         is_hls: true,
         headers,
         subtitle,

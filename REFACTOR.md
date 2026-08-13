@@ -8,8 +8,8 @@ feature work.
 
 ## 1. Architecture Debt
 
-### 1.1 [PARTIALLY RESOLVED] No cache expiry / invalidation anywhere
-- **Files:** `src/sync/mal.rs:84-96`, `src/aniskip.rs`
+### 1.1 No cache expiry / invalidation 
+- **Files:** `src/sync/mal.rs:84-96`
 - **Status:** `SkipCache` in `src/aniskip.rs` resolved (added `inserted_at` timestamp, 30-day TTL pruning on load, max 1000 entry cap on save, and compact unindented JSON serialization). `MalIdCache` pending.
 
 ### 1.2 VibeProxy singleton and unbounded session map
@@ -60,10 +60,9 @@ feature work.
   anineko's NAME-based variant becomes a wrapper.
 
 ### 2.7 `write_http_response` duplicates proxy.rs and emits malformed reason phrases
-- **Files:** `src/providers/anineko.rs:693-708`, `src/proxy.rs:154-215`
+- **Files:** `src/providers/anineko.rs:693-708`
 - **Problem:** anineko always writes `"HTTP/1.1 {status} OK"` — so 404/502/400
-  responses are emitted as `404 OK` (malformed). `proxy.rs` has a proper
-  reason-phrase map.
+  responses are emitted as `404 OK` (malformed) reason-phrase map.
 - **Why it matters:** Strict HTTP clients reject the malformed responses.
 - **Solution:** Shared `write_http_response(status, reason, content_type, body)`
   with a correct reason-phrase map, used by both.
@@ -87,26 +86,6 @@ feature work.
 - **Solution:** Generic `fetch_with_retry(client, builder, attempts, backoff,
   retryable_predicate)` in `mod.rs`.
 
-### 2.13 Regexes recompiled on every request
-- **Files:** `src/providers/anidb.rs:99-102,147-154,300-301,335,412`,
-  `animehub.rs:119,332,389`, `anineko.rs:133,217,227-228,294,301,328,346,408`
-- **Problem:** `Regex::new` called inside per-request hot paths.
-- **Why it matters:** Wasted CPU per search/stream fetch.
-- **Solution:** `std::sync::LazyLock<Regex>` (rust-version 1.85 supports it).
-
-### 2.14 Magic numbers / hardcoded literals
-- **Files:** `src/providers/animehub.rs:300,341,97-105`, `senshi.rs:393`,
-  `anineko.rs:356-362`, `src/player.rs:220,234,93-98,194-197,258-268`,
-  `src/downloader.rs:244-257,322`, `src/cache.rs:26`, `src/sync/mal.rs:487,721,277,335`
-- **Problem:** `server=0`, `?pl_usn=1`, `.min(2)` page cap, quality-rank `1000`
-  with `"Auto"` (vs lowercase `"auto"` elsewhere), mpv exit code `2`, ffmpeg
-  arg soup, aria2c `-x 16`, 30s cache timeout, MAL `limit=5`/`limit=100`,
-  duplicated `Duration::from_secs(30)`.
-- **Why it matters:** Undocumented values; quality-label/rank tables already
-  inconsistent across providers.
-- **Solution:** Named consts (`MPV_EXIT_QUIT`, `MAL_API_LIMIT`,
-  `CACHE_TIMEOUT_SECS`, `AUTO_QUALITY_RANK`); unify the auto label/rank via 2.6.
-
 ### 2.15 String slicing / format-assumption parsing
 - **Files:** `src/providers/animehub.rs:146-157,266-271`, `mangapill.rs:98`
 - **Problem:** `truncate(len - 4)` / `- 6` byte-slicing on user-visible strings;
@@ -123,17 +102,6 @@ feature work.
 - **Why it matters:** Two failure styles for the identical fallible operation;
   a typo'd selector crashes the process.
 - **Solution:** Shared fallible `parse_selector(&str) -> Result<Selector>`.
-
-### 2.17 StreamOption::provider values inconsistent
-- **Files:** `src/providers/anidb.rs:366` (`"AniDB"`), `animehub.rs:415,430`
-  (`"animehub"` lowercase), `senshi.rs:390` (`"Senshi"`), `anineko.rs:368,423`
-  (`"bibiemb"`/`"vibeplayer"` — the embed host, not the provider).
-- **Problem:** Displayed directly in `StreamOption::label()` (`types.rs:105-108`);
-  users see a third-party embed host for AniNeko and mixed casing elsewhere.
-- **Why it matters:** Inconsistent UX; AGENTS.md says it must match
-  `Provider::display_name()`.
-- **Solution:** Use `Provider::display_name()` everywhere; embed host can be
-  appended to the URL/label if needed.
 
 ### 2.20 Remaining small duplications
 - **Files:** `src/cmd/anime.rs:37-43` vs `src/cmd/sync.rs:52-58` (SkipOptions

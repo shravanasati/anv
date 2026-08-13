@@ -25,6 +25,9 @@ const MAL_API_BASE: &str = "https://api.myanimelist.net/v2";
 const OAUTH_PORT: u16 = 11422;
 const OAUTH_REDIRECT_URI: &str = "http://localhost:11422/callback";
 const CODE_VERIFIER_LEN: usize = 64;
+const MAL_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+const MAL_SEARCH_LIMIT: &str = "5";
+const MAL_ANIMELIST_LIMIT: usize = 100;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MalToken {
@@ -273,7 +276,7 @@ impl MalClient {
         prefer_english_titles: bool,
     ) -> Result<Self> {
         let http = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(MAL_HTTP_TIMEOUT)
             .build()
             .context("failed to build HTTP client")?;
 
@@ -331,7 +334,7 @@ impl MalClient {
         println!("Authorization code received. Exchanging for token...");
 
         let http = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(MAL_HTTP_TIMEOUT)
             .build()
             .context("failed to build HTTP client")?;
 
@@ -483,7 +486,7 @@ impl MalClient {
                 .bearer_auth(&self.token.access_token)
                 .query(&[
                     ("q", sanitized.as_str()),
-                    ("limit", "5"),
+                    ("limit", MAL_SEARCH_LIMIT),
                     ("fields", "id,title,alternative_titles"),
                 ])
                 .send()
@@ -718,7 +721,7 @@ impl MalClient {
     async fn fetch_list(&self, status: &str) -> Result<Vec<MalWatchlistEntry>> {
         let mut entries: Vec<MalWatchlistEntry> = Vec::new();
         let mut next_url: Option<String> = Some(format!(
-            "{MAL_API_BASE}/users/@me/animelist?status={}&limit=100&fields=num_episodes,status,list_status,alternative_titles",
+            "{MAL_API_BASE}/users/@me/animelist?status={}&limit={MAL_ANIMELIST_LIMIT}&fields=num_episodes,status,list_status,alternative_titles",
             status
         ));
 

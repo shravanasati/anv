@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use url::Url;
 
 use crate::dbg_log;
-use crate::providers::AnimeProvider;
-use crate::types::{EpisodeCounts, ShowInfo, StreamOption, Translation};
+use crate::providers::{AUTO_QUALITY_LABEL, AUTO_QUALITY_RANK, AnimeProvider};
+use crate::types::{EpisodeCounts, Provider, ShowInfo, StreamOption, Translation};
 
 const BASE_URL: &str = "https://senshi.live";
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -360,10 +360,10 @@ impl AnimeProvider for SenshiClient {
             headers.insert("User-Agent".to_string(), USER_AGENT.to_string());
 
             streams.push(StreamOption {
-                provider: "Senshi".to_string(),
+                provider: Provider::Senshi.display_name().to_string(),
                 url: stream_url,
-                quality_label: "Auto".to_string(),
-                quality_rank: 1000,
+                quality_label: AUTO_QUALITY_LABEL.to_string(),
+                quality_rank: AUTO_QUALITY_RANK,
                 is_hls: true,
                 headers,
                 subtitle,

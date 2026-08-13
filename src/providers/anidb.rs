@@ -2,14 +2,39 @@ use anyhow::{Result, anyhow};
 use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::time::Duration;
+use regex::Regex;
 use url::Url;
 
 use crate::dbg_log;
-use crate::providers::{AnimeProvider, USER_AGENT};
-use crate::types::{EpisodeCounts, ShowInfo, StreamOption, Translation};
+use crate::providers::{AUTO_QUALITY_LABEL, AUTO_QUALITY_RANK, AnimeProvider, USER_AGENT};
+use crate::types::{EpisodeCounts, Provider, ShowInfo, StreamOption, Translation};
 
 pub const ANIDB_BASE_URL: &str = "https://anidb.app";
+
+static RE_SUGGESTIONS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"href="https://anidb\.app/anime/([a-z0-9-]+-[0-9]+)"[\s\S]*?alt="([^"]+)""#).unwrap()
+});
+static RE_BROWSE_TITLE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"href="https://anidb\.app/anime/([a-z0-9-]+-[0-9]+)"[^>]*title="([^"]+)""#).unwrap()
+});
+static RE_BROWSE_ALT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"href="/anime/([a-z0-9-]+-[0-9]+)"[^>]*alt="([^"]+)""#).unwrap()
+});
+static RE_FILE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"file:\s*['"]([^'"]+\.m3u8[^'"]*)['"]"#).unwrap()
+});
+static RE_FILE_GENERIC: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(https?://[^\s'"]+\.m3u8[^\s'"]*)"#).unwrap()
+});
+static RE_RES: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"RESOLUTION=\d+x(\d+)"#).unwrap()
+});
+static RE_MAL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"myanimelist\.net/anime/([0-9]+)"#).unwrap()
+});
+
 
 fn decode_html_entities(s: &str) -> String {
     s.replace("&quot;", "\"")
@@ -89,15 +114,10 @@ impl AnimeProvider for AnidbClient {
         );
 
         // Matches <a href="https://anidb.app/anime/SLUG"> ... alt="TITLE" across newlines
-        let re_suggestions = regex::Regex::new(
-            r#"href="https://anidb\.app/anime/([a-z0-9-]+-[0-9]+)"[\s\S]*?alt="([^"]+)""#,
-        )
-        .unwrap();
-
         let mut shows = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
 
-        for cap in re_suggestions.captures_iter(&suggestions_response) {
+        for cap in RE_SUGGESTIONS.captures_iter(&suggestions_response) {
             let id = cap[1].to_string();
             let title = decode_html_entities(&cap[2]);
             if seen_ids.insert(id.clone()) {
@@ -139,17 +159,7 @@ impl AnimeProvider for AnidbClient {
                 browse_response.len()
             );
 
-            // Full URL + title attribute (current browse page format)
-            let re_browse_title = regex::Regex::new(
-                r#"href="https://anidb\.app/anime/([a-z0-9-]+-[0-9]+)"[^>]*title="([^"]+)""#,
-            )
-            .unwrap();
-            // Legacy: relative URL + alt attribute (old format, kept for resilience)
-            let re_browse_alt =
-                regex::Regex::new(r#"href="/anime/([a-z0-9-]+-[0-9]+)"[^>]*alt="([^"]+)""#)
-                    .unwrap();
-
-            for cap in re_browse_title.captures_iter(&browse_response) {
+            for cap in RE_BROWSE_TITLE.captures_iter(&browse_response) {
                 let id = cap[1].to_string();
                 let title = decode_html_entities(&cap[2]);
                 if seen_ids.insert(id.clone()) {
@@ -163,7 +173,7 @@ impl AnimeProvider for AnidbClient {
             }
 
             if shows.is_empty() {
-                for cap in re_browse_alt.captures_iter(&browse_response) {
+                for cap in RE_BROWSE_ALT.captures_iter(&browse_response) {
                     let id = cap[1].to_string();
                     let title = decode_html_entities(&cap[2]);
                     if seen_ids.insert(id.clone()) {
@@ -296,14 +306,11 @@ impl AnimeProvider for AnidbClient {
             .await?;
         dbg_log!("anidb", "fetch_streams: embed page ({} bytes)", embed_page.len());
 
-        let re_file = regex::Regex::new(r#"file:\s*['"]([^'"]+\.m3u8[^'"]*)['"]"#).unwrap();
-        let re_file_generic = regex::Regex::new(r#"(https?://[^\s'"]+\.m3u8[^\s'"]*)"#).unwrap();
-
-        let master_m3u8 = re_file
+        let master_m3u8 = RE_FILE
             .captures(&embed_page)
             .map(|c| c[1].to_string())
             .or_else(|| {
-                re_file_generic
+                RE_FILE_GENERIC
                     .captures(&embed_page)
                     .map(|c| c[1].to_string())
             })
@@ -332,12 +339,10 @@ impl AnimeProvider for AnidbClient {
         let mut streams = Vec::new();
         let lines: Vec<&str> = m3u8_content.lines().collect();
 
-        let re_res = regex::Regex::new(r#"RESOLUTION=\d+x(\d+)"#).unwrap();
-
         for i in 0..lines.len() {
             let line = lines[i].trim();
             if line.starts_with("#EXT-X-STREAM-INF:") {
-                let height = re_res
+                let height = RE_RES
                     .captures(line)
                     .and_then(|c| c[1].parse::<i32>().ok())
                     .unwrap_or(0);
@@ -356,14 +361,14 @@ impl AnimeProvider for AnidbClient {
                         let quality_label = if height > 0 {
                             format!("{height}p")
                         } else {
-                            "auto".to_string()
+                            AUTO_QUALITY_LABEL.to_string()
                         };
 
                         let mut headers = HashMap::new();
                         headers.insert("Referer".to_string(), ANIDB_BASE_URL.to_string());
 
                         streams.push(StreamOption {
-                            provider: "AniDB".to_string(),
+                            provider: Provider::Anidb.display_name().to_string(),
                             url: full_url,
                             quality_label,
                             quality_rank: height,
@@ -382,10 +387,10 @@ impl AnimeProvider for AnidbClient {
             headers.insert("Referer".to_string(), ANIDB_BASE_URL.to_string());
 
             streams.push(StreamOption {
-                provider: "AniDB".to_string(),
+                provider: Provider::Anidb.display_name().to_string(),
                 url: master_m3u8,
-                quality_label: "auto".to_string(),
-                quality_rank: 0,
+                quality_label: AUTO_QUALITY_LABEL.to_string(),
+                quality_rank: AUTO_QUALITY_RANK,
                 is_hls: true,
                 headers,
                 subtitle: None,
@@ -409,7 +414,6 @@ impl AnimeProvider for AnidbClient {
             .text()
             .await?;
 
-        let re_mal = regex::Regex::new(r#"myanimelist\.net/anime/([0-9]+)"#).unwrap();
-        Ok(re_mal.captures(&text).map(|cap| cap[1].to_string()))
+        Ok(RE_MAL.captures(&text).map(|cap| cap[1].to_string()))
     }
 }

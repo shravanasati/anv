@@ -7,6 +7,8 @@ use tokio::process::Command;
 use crate::config::AppConfig;
 use crate::types::StreamOption;
 
+const ARIA2C_DEFAULT_ARGS: &str = "aria2c:-x 16 -s 16 -k 1M";
+
 /// Supported download engines maintained internally by anv.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DownloaderEngine {
@@ -333,7 +335,7 @@ async fn download_with_ytdlp_internal(
         args.push("--downloader".to_string());
         args.push("aria2c".to_string());
         args.push("--downloader-args".to_string());
-        args.push("aria2c:-x 16 -s 16 -k 1M".to_string());
+        args.push(ARIA2C_DEFAULT_ARGS.to_string());
     }
 
     for (k, v) in &stream.headers {

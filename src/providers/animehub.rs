@@ -1,17 +1,28 @@
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
+use regex::Regex;
 use reqwest::Client;
 use scraper::{Html, Selector};
 use serde::Deserialize;
 use url::Url;
 
 use crate::dbg_log;
-use crate::providers::{AnimeProvider, USER_AGENT};
-use crate::types::{EpisodeCounts, ShowInfo, StreamOption, Translation};
+use crate::providers::{AUTO_QUALITY_LABEL, AnimeProvider, USER_AGENT};
+use crate::types::{EpisodeCounts, Provider, ShowInfo, StreamOption, Translation};
 
 pub const ANIMEHUB_BASE_URL: &str = "https://123animehub.cc";
+pub const ANIMEHUB_MAX_SEARCH_PAGES: usize = 2;
+pub const HS_PARAM_PL_USN: &str = "1";
+
+static RE_NUM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(\d+)"#).unwrap());
+static RE_ZRPART2: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"var\s+zrpart2\s*=\s*['"]([^'"]+)['"]"#).unwrap()
+});
+static RE_RES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"RESOLUTION=\d+x(\d+)"#).unwrap());
+
 
 #[derive(Debug, Clone)]
 pub struct AnimehubClient {
@@ -116,7 +127,7 @@ impl AnimeProvider for AnimehubClient {
                 .trim()
                 .parse::<usize>()
                 .unwrap_or(0)
-                .min(2),
+                .min(ANIMEHUB_MAX_SEARCH_PAGES),
             None => 0,
         };
 
@@ -131,7 +142,6 @@ impl AnimeProvider for AnimehubClient {
         let lang_sel = Selector::parse("span.sub, span.dub")
             .map_err(|e| anyhow!("invalid lang selector: {e}"))?;
         let ep_sel = Selector::parse("span.eps, span.ep, span.tick-eps, div.status, span.tick-item, span.total-ep, div.episodes").ok();
-        let re_num = regex::Regex::new(r#"(\d+)"#).map_err(|e| anyhow!("invalid regex: {e}"))?;
 
         let mut results_order = Vec::new();
         let mut results_map: HashMap<String, (String, bool, bool, usize)> = HashMap::new();
@@ -184,7 +194,7 @@ impl AnimeProvider for AnimehubClient {
                 if let Some(ref sel) = ep_sel {
                     for el in item.select(sel) {
                         let text = el.text().collect::<String>();
-                        for cap in re_num.captures_iter(&text) {
+                        for cap in RE_NUM.captures_iter(&text) {
                             if let Ok(n) = cap[1].parse::<usize>() {
                                 if n > ep_count {
                                     ep_count = n;
@@ -301,8 +311,7 @@ impl AnimeProvider for AnimehubClient {
         let req = self.client.get(&target).header("Referer", &anime_url);
         let target_html = self.fetch_string_with_retry(req).await?;
 
-        let re_zrpart2 = regex::Regex::new(r#"var\s+zrpart2\s*=\s*['"]([^'"]+)['"]"#)?;
-        let zrpart2 = re_zrpart2
+        let zrpart2 = RE_ZRPART2
             .captures(&target_html)
             .and_then(|c| c.get(1))
             .map(|m| m.as_str())
@@ -310,7 +319,7 @@ impl AnimeProvider for AnimehubClient {
 
         let encoded_zrpart2 =
             url::form_urlencoded::byte_serialize(zrpart2.as_bytes()).collect::<String>();
-        let hs_url = format!("{target_base}/hs/{encoded_zrpart2}?pl_usn=1");
+        let hs_url = format!("{target_base}/hs/{encoded_zrpart2}?pl_usn={HS_PARAM_PL_USN}");
 
         let req = self.client.get(&hs_url);
         let hs_html = self.fetch_string_with_retry(req).await?;
@@ -358,12 +367,11 @@ impl AnimeProvider for AnimehubClient {
         let base_m3u8_url = Url::parse(&sources_url).ok();
         let mut streams = Vec::new();
         let lines: Vec<&str> = m3u8_text.lines().collect();
-        let re_res = regex::Regex::new(r#"RESOLUTION=\d+x(\d+)"#)?;
 
         for i in 0..lines.len() {
             let line = lines[i].trim();
             if line.starts_with("#EXT-X-STREAM-INF:") {
-                let height = re_res
+                let height = RE_RES
                     .captures(line)
                     .and_then(|c| c[1].parse::<i32>().ok())
                     .unwrap_or(0);
@@ -381,10 +389,10 @@ impl AnimeProvider for AnimehubClient {
                         let quality_label = if height > 0 {
                             format!("{height}p")
                         } else {
-                            "auto".to_string()
+                            AUTO_QUALITY_LABEL.to_string()
                         };
                         streams.push(StreamOption {
-                            provider: "animehub".to_string(),
+                            provider: Provider::Animehub.display_name().to_string(),
                             url: full_url,
                             quality_label,
                             quality_rank: height,
@@ -399,7 +407,7 @@ impl AnimeProvider for AnimehubClient {
 
         if streams.is_empty() {
             streams.push(StreamOption {
-                provider: "animehub".to_string(),
+                provider: Provider::Animehub.display_name().to_string(),
                 url: sources_url,
                 quality_label: "1080p".to_string(),
                 quality_rank: 1080,
@@ -428,8 +436,7 @@ mod tests {
                 </script>
             </html>
         "#;
-        let re_zrpart2 = regex::Regex::new(r#"var\s+zrpart2\s*=\s*['"]([^'"]+)['"]"#).unwrap();
-        let cap = re_zrpart2.captures(html).unwrap();
+        let cap = RE_ZRPART2.captures(html).unwrap();
         assert_eq!(&cap[1], "abcd1234efgh5678");
     }
 

@@ -8,6 +8,27 @@ pub mod senshi;
 
 pub const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36";
 
+pub const AUTO_QUALITY_LABEL: &str = "auto";
+pub const AUTO_QUALITY_RANK: i32 = 0;
+
+pub fn parse_quality_rank(label: &str) -> i32 {
+    let clean = label.trim().to_lowercase();
+    if clean.starts_with("1080") {
+        1080
+    } else if clean.starts_with("720") {
+        720
+    } else if clean.starts_with("480") {
+        480
+    } else if clean.starts_with("360") {
+        360
+    } else if clean.starts_with("240") {
+        240
+    } else {
+        AUTO_QUALITY_RANK
+    }
+}
+
+
 pub trait AnimeProvider {
     async fn search_shows(&self, query: &str, translation: Translation) -> Result<Vec<ShowInfo>>;
     async fn fetch_episodes(&self, show_id: &str, translation: Translation) -> Result<Vec<String>>;
