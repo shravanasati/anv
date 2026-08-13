@@ -753,11 +753,30 @@ pub async fn play_show<P: SyncProvider>(
     let (mut current_episode, mut skip_selection) = match &prefer_episode {
         Some(ep) if episodes.contains(ep) => (ep.clone(), true),
         Some(ep) => {
-            println!(
-                "Episode '{}' does not exist for '{}'. Showing episode list.",
-                ep, show.title
-            );
-            (fallback_ep, false)
+            // The stored episode label didn't match by value. Some providers use
+            // cumulative numbering (e.g. Season 4 starts at ep 67 instead of 1).
+            // Try treating the label as a 1-based index into sorted_episodes so
+            // that history resume still lands on the right episode.
+            if let Some(ep_by_index) = ep
+                .parse::<usize>()
+                .ok()
+                .filter(|&n| n >= 1)
+                .and_then(|n| sorted_episodes.get(n - 1))
+            {
+                println!(
+                    "Episode '{}' not found by label; resuming at index {} → episode '{}'.",
+                    ep,
+                    ep.parse::<usize>().unwrap(),
+                    ep_by_index
+                );
+                (ep_by_index.clone(), true)
+            } else {
+                println!(
+                    "Episode '{}' does not exist for '{}'. Showing episode list.",
+                    ep, show.title
+                );
+                (fallback_ep, false)
+            }
         }
         None => {
             if auto_play_next {
