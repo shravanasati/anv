@@ -1,5 +1,4 @@
 use anyhow::{Result, bail};
-use chrono::Utc;
 use dialoguer::Select;
 use reqwest::StatusCode;
 use std::path::Path;
@@ -7,19 +6,17 @@ use std::path::Path;
 use crate::Cli;
 use crate::aniskip::SkipOptions;
 use crate::cmd::manga::read_manga;
-use crate::config::AppConfig;
-use crate::history::{History, HistoryEntry, theme};
-use crate::player::{launch_player, select_stream_by_quality};
-use crate::providers::{
-    AnimeProvider, MangaProvider, anidb::AnidbClient, animehub::AnimehubClient,
-    anineko::AninekoClient, senshi::SenshiClient,
+use crate::cmd::media::{
+    ConsumeOutcome, MediaContext, MediaEntry, MediaLoopConfig, run_media_loop,
 };
+use crate::cmd::search::aggregate_anime_search;
+use crate::config::AppConfig;
+use crate::history::{History, theme};
+use crate::player::{launch_player, select_stream_by_quality};
+use crate::providers::{AnimeProvider, MangaProvider};
 use crate::sync::SyncProvider;
 use crate::types::{ChapterCounts, EpisodeCounts, MangaInfo, Provider, ShowInfo, Translation};
-use crate::utils::{
-    next_episode_label_presorted, search_opt_with_timeout, search_single_with_timeout,
-    sorted_episode_labels,
-};
+use crate::utils::{search_single_with_timeout, sorted_episode_labels};
 
 pub async fn run_anime_flow<P: SyncProvider>(
     cli: &Cli,
@@ -52,20 +49,21 @@ pub async fn run_anime_flow<P: SyncProvider>(
 
             if entry.is_manga {
                 if download_range.is_some() {
-                    bail!("The --download / -D flag is currently only supported for anime streaming.");
+                    bail!(
+                        "The --download / -D flag is currently only supported for anime streaming."
+                    );
                 }
                 let client = target_provider.manga_client()?;
-                let manga_info = if target_provider == entry.provider
-                    || entry.provider == Provider::All
-                {
-                    MangaInfo {
-                        id: entry.show_id.clone(),
-                        title: entry.show_title.clone(),
-                        available_chapters: ChapterCounts::default(),
-                    }
-                } else {
-                    resolve_manga_info(&client, &entry.show_title, entry.translation).await?
-                };
+                let manga_info =
+                    if target_provider == entry.provider || entry.provider == Provider::All {
+                        MangaInfo {
+                            id: entry.show_id.clone(),
+                            title: entry.show_title.clone(),
+                            available_chapters: ChapterCounts::default(),
+                        }
+                    } else {
+                        resolve_manga_info(&client, &entry.show_title, entry.translation).await?
+                    };
                 read_manga(
                     &client,
                     entry.translation,
@@ -85,22 +83,17 @@ pub async fn run_anime_flow<P: SyncProvider>(
                 .await?;
             } else {
                 let client = target_provider.anime_client()?;
-                let show_info = if target_provider == entry.provider
-                    || entry.provider == Provider::All
-                {
-                    ShowInfo {
-                        id: entry.show_id.clone(),
-                        title: entry.show_title.clone(),
-                        mal_id: if target_provider == Provider::Senshi {
-                            Some(entry.show_id.clone())
-                        } else {
-                            None
-                        },
-                        available_eps: EpisodeCounts::default(),
-                    }
-                } else {
-                    resolve_show_info(&client, &entry.show_title, entry.translation).await?
-                };
+                let show_info =
+                    if target_provider == entry.provider || entry.provider == Provider::All {
+                        ShowInfo {
+                            id: entry.show_id.clone(),
+                            title: entry.show_title.clone(),
+                            mal_id: None,
+                            available_eps: EpisodeCounts::default(),
+                        }
+                    } else {
+                        resolve_show_info(&client, &entry.show_title, entry.translation).await?
+                    };
                 play_show(
                     &client,
                     history,
@@ -144,80 +137,8 @@ pub async fn run_anime_flow<P: SyncProvider>(
 
     match provider {
         Provider::All => {
-            let anidb_client = AnidbClient::new().ok();
-            let animehub_client = AnimehubClient::new().ok();
-            let anineko_client = AninekoClient::new().ok();
-            let senshi_client = SenshiClient::new().ok();
-
-            println!("Searching across all anime providers for \"{}\"...", query);
-
-            let (
-                (anidb_shows, anidb_to),
-                (animehub_shows, animehub_to),
-                (anineko_shows, anineko_to),
-                (senshi_shows, senshi_to),
-            ) = tokio::join!(
-                search_opt_with_timeout(
-                    anidb_client
-                        .as_ref()
-                        .map(|c| c.search_shows(&query, translation)),
-                    search_timeout
-                ),
-                search_opt_with_timeout(
-                    animehub_client
-                        .as_ref()
-                        .map(|c| c.search_shows(&query, translation)),
-                    search_timeout
-                ),
-                search_opt_with_timeout(
-                    anineko_client
-                        .as_ref()
-                        .map(|c| c.search_shows(&query, translation)),
-                    search_timeout
-                ),
-                search_opt_with_timeout(
-                    senshi_client
-                        .as_ref()
-                        .map(|c| c.search_shows(&query, translation)),
-                    search_timeout
-                ),
-            );
-
-            let attempted_count = [
-                anidb_client.is_some(),
-                animehub_client.is_some(),
-                anineko_client.is_some(),
-                senshi_client.is_some(),
-            ]
-            .iter()
-            .filter(|&&b| b)
-            .count();
-
-            let timed_out_count = [anidb_to, animehub_to, anineko_to, senshi_to]
-                .iter()
-                .filter(|&&b| b)
-                .count();
-
-            if attempted_count > 0 && timed_out_count * 2 >= attempted_count {
-                eprintln!(
-                    "Warning: {} of {} providers timed out after {}s. Try increasing search timeout with `-T <seconds>` (e.g. `-T 30`).",
-                    timed_out_count, attempted_count, timeout_secs
-                );
-            }
-
-            let mut combined = Vec::new();
-            for show in anidb_shows {
-                combined.push((Provider::Anidb, show));
-            }
-            for show in animehub_shows {
-                combined.push((Provider::Animehub, show));
-            }
-            for show in anineko_shows {
-                combined.push((Provider::Anineko, show));
-            }
-            for show in senshi_shows {
-                combined.push((Provider::Senshi, show));
-            }
+            let combined =
+                aggregate_anime_search(&query, translation, search_timeout, timeout_secs).await?;
 
             if combined.is_empty() {
                 bail!("No results for \"{}\" ({})", query, translation.label());
@@ -408,17 +329,6 @@ pub async fn play_show<P: SyncProvider>(
 
     let sorted_episodes = sorted_episode_labels(&episodes);
 
-    let latest_available = sorted_episodes
-        .last()
-        .cloned()
-        .expect("episodes is non-empty; bail!() above ensures this");
-    println!(
-        "Found {} {} episodes. Latest available: {}.",
-        episodes.len(),
-        translation.label(),
-        latest_available
-    );
-
     let last_watched_local = history.last_episode(&show.id, translation);
     // Resolve override_last_watched by index when the label isn't in the
     // episode list (e.g. MAL says "11 watched" but provider lists "67"-"78").
@@ -442,167 +352,112 @@ pub async fn play_show<P: SyncProvider>(
         }
     });
     let last_watched = override_last_watched.or(last_watched_local);
-    if let Some(prev) = &last_watched {
-        println!("Last watched {} episode: {}.", translation.label(), prev);
-    }
 
-    let fallback_ep = last_watched
-        .clone()
-        .unwrap_or_else(|| latest_available.clone());
-    let (mut current_episode, mut skip_selection) = match &prefer_episode {
-        Some(ep) if episodes.contains(ep) => (ep.clone(), true),
-        Some(ep) => {
-            // The stored episode label didn't match by value. Some providers use
-            // cumulative numbering (e.g. Season 4 starts at ep 67 instead of 1).
-            // Try treating the label as a 1-based index into sorted_episodes so
-            // that history resume still lands on the right episode.
-            if let Some(ep_by_index) = ep
-                .parse::<usize>()
-                .ok()
-                .filter(|&n| n >= 1)
-                .and_then(|n| sorted_episodes.get(n - 1))
-            {
-                println!(
-                    "Episode '{}' not found by label; resuming at index {} → episode '{}'.",
-                    ep,
-                    ep.parse::<usize>().unwrap(),
-                    ep_by_index
-                );
-                (ep_by_index.clone(), true)
-            } else {
-                println!(
-                    "Episode '{}' does not exist for '{}'. Showing episode list.",
-                    ep, show.title
-                );
-                (fallback_ep, false)
-            }
-        }
-        None => {
-            if auto_play_next {
-                if let Some(last) = &last_watched {
-                    if let Some(next) = next_episode_label_presorted(last, &sorted_episodes) {
-                        (next, true)
-                    } else {
-                        (last.clone(), false)
+    let items: Vec<MediaEntry> = episodes
+        .iter()
+        .map(|label| MediaEntry {
+            id: show.id.clone(),
+            label: label.clone(),
+        })
+        .collect();
+
+    let show_id = show.id.clone();
+    let show_title = show.title.clone();
+    let mal_id = show.mal_id.clone();
+    let consume = move |entry: &MediaEntry, ctx: &MediaContext| {
+        let label = entry.label.clone();
+        let show_id = show_id.clone();
+        let show_title = show_title.clone();
+        let mal_id = mal_id.clone();
+        let skip_opts = skip_opts.clone();
+        let ep_num = ctx.ep_num;
+        let latest = ctx.latest.to_string();
+        async move {
+            println!("Fetching streams for episode {}...", label);
+            let streams = match client.fetch_streams(&show_id, translation, &label).await {
+                Ok(s) if !s.is_empty() => s,
+                res => {
+                    if let Err(ref err) = res {
+                        if let Some(req_err) = err.downcast_ref::<reqwest::Error>() {
+                            if req_err.status() == Some(StatusCode::BAD_REQUEST) {
+                                eprintln!(
+                                    "Episode {} is not yet available for {} translation.",
+                                    label,
+                                    translation.label()
+                                );
+                                return Ok(ConsumeOutcome::RetryWith(latest.clone()));
+                            }
+                        }
                     }
-                } else {
-                    (sorted_episodes.first().unwrap().clone(), true)
+                    Vec::new()
                 }
-            } else {
-                (fallback_ep, false)
+            };
+
+            if streams.is_empty() {
+                eprintln!(
+                    "No supported streams found for episode {label}. Try another episode or rerun later."
+                );
+                return Ok(ConsumeOutcome::RetryWith(latest.clone()));
             }
+
+            let Some(stream) = select_stream_by_quality(streams, config.quality)? else {
+                return Ok(ConsumeOutcome::Retry);
+            };
+
+            launch_player(
+                &stream,
+                &show_title,
+                &label,
+                mal_id.as_deref(),
+                config,
+                skip_opts,
+            )
+            .await?;
+
+            if let Some(sync_prov) = sync_provider {
+                // `ep_num` is the 1-based position of the label in the sorted
+                // list, converting cumulative provider labels (e.g. "30" = ep 6
+                // of a 12-ep season) to the season-relative count MAL expects.
+                if let Err(err) = sync_prov
+                    .sync_episode(
+                        &show_id,
+                        &show_title,
+                        ep_num,
+                        provider,
+                        mal_id.as_deref().and_then(|s| s.parse().ok()),
+                    )
+                    .await
+                {
+                    eprintln!("[sync] error: {err}");
+                }
+            }
+
+            Ok(ConsumeOutcome::Consumed)
         }
     };
 
-    let theme = theme();
-    loop {
-        let default_idx = episodes
-            .iter()
-            .position(|ep| ep == &current_episode)
-            .or_else(|| episodes.iter().position(|ep| ep == &latest_available))
-            .unwrap_or(0);
-
-        let idx = if skip_selection || binge {
-            skip_selection = false;
-            default_idx
-        } else {
-            let selection = Select::with_theme(&theme)
-                .with_prompt("Episode to play (type to search, Esc to cancel)")
-                .items(&episodes)
-                .default(default_idx)
-                .interact_opt()?;
-            let Some(i) = selection else {
-                println!("Exiting playback loop.");
-                return Ok(());
-            };
-            i
-        };
-
-        let chosen = episodes[idx].clone();
-        let auto_advance = idx == default_idx;
-
-        println!("Fetching streams for episode {}...", chosen);
-        let streams = match client.fetch_streams(&show.id, translation, &chosen).await {
-            Ok(s) if !s.is_empty() => s,
-            res => {
-                if let Err(ref err) = res {
-                    if let Some(req_err) = err.downcast_ref::<reqwest::Error>() {
-                        if req_err.status() == Some(StatusCode::BAD_REQUEST) {
-                            eprintln!(
-                                "Episode {chosen} is not yet available for {} translation.",
-                                translation.label()
-                            );
-                            current_episode = latest_available.clone();
-                            continue;
-                        }
-                    }
-                }
-                Vec::new()
-            }
-        };
-
-        if streams.is_empty() {
-            eprintln!(
-                "No supported streams found for episode {chosen}. Try another episode or rerun later."
-            );
-            current_episode = latest_available.clone();
-            continue;
-        }
-
-        let Some(stream) = select_stream_by_quality(streams, config.quality)? else {
-            continue;
-        };
-
-        let next_candidate = next_episode_label_presorted(&chosen, &sorted_episodes);
-
-        launch_player(
-            &stream,
-            &show.title,
-            &chosen,
-            show.mal_id.as_deref(),
-            config,
-            skip_opts.clone(),
-        )
-        .await?;
-
-        history.upsert(HistoryEntry {
-            show_id: show.id.clone(),
-            show_title: show.title.clone(),
-            episode: chosen.clone(),
-            translation,
-            provider,
-            is_manga: false,
-            watched_at: Utc::now(),
-        });
-        history.save(history_path)?;
-
-        if let Some(sync_prov) = sync_provider {
-            // Use the 1-based position of `chosen` in sorted_episodes as the
-            // MAL episode count. This correctly converts cumulative provider
-            // labels (e.g. "30" = ep 6 of a 12-ep season) to the
-            // season-relative count that MAL expects.
-            let ep_num = sorted_episodes
-                .iter()
-                .position(|ep| ep == &chosen)
-                .map(|pos| (pos + 1) as u32)
-                .unwrap_or_else(|| chosen.parse::<u32>().unwrap_or(0));
-            if let Err(err) = sync_prov
-                .sync_episode(&show.id, &show.title, ep_num, provider)
-                .await
-            {
-                eprintln!("[sync] error: {err}");
-            }
-        }
-
-        match (auto_advance || binge, next_candidate) {
-            (true, Some(next)) => current_episode = next,
-            (true, None) => {
-                println!("No further episodes found. Exiting.");
-                return Ok(());
-            }
-            (false, candidate) => current_episode = candidate.unwrap_or(chosen),
-        }
-    }
+    run_media_loop(
+        &show.title,
+        items,
+        prefer_episode,
+        last_watched,
+        auto_play_next,
+        binge,
+        history,
+        history_path,
+        translation,
+        provider,
+        false,
+        MediaLoopConfig {
+            select_prompt: "Episode to play (type to search, Esc to cancel)",
+            use_fuzzy: false,
+            unit_plural: "episodes",
+            unit_singular: "episode",
+            last_verb: "watched",
+        },
+        consume,
+    )
+    .await
 }
 
 async fn resolve_show_info<C: AnimeProvider>(

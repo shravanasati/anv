@@ -210,6 +210,68 @@ async fn main() -> Result<()> {
     })
 }
 
+/// Per-subcommand flags for the Watchlist / Watching handlers.
+struct ListSubFlags<'a> {
+    binge: bool,
+    dub: bool,
+    episode: &'a Option<String>,
+    next_episode: bool,
+    provider: &'a Option<Provider>,
+    download: &'a Option<String>,
+}
+
+/// Shared handler for the Watchlist / Watching subcommands. Merges the
+/// subcommand flags with global CLI flags and config before launching the list.
+async fn run_list_command(
+    list_type: &'static str,
+    list_name: &'static str,
+    sub: ListSubFlags<'_>,
+    cli: &Cli,
+    cfg: &AppConfig,
+) -> Result<()> {
+    let history_path = history_path()?;
+    let mut history = History::load(&history_path)?;
+    let mal_client = build_mal_client_if_enabled(cfg).await;
+    let binge = sub.binge || cli.binge || cfg.binge;
+    let auto_play_next = sub.next_episode || cfg.auto_play_next;
+    let translation = if sub.dub || cli.dub {
+        Translation::Dub
+    } else {
+        Translation::Sub
+    };
+    let episode = sub.episode.clone().or_else(|| cli.episode.clone());
+    let provider = sub.provider.unwrap_or(cli.provider);
+    let download = sub.download.clone().or_else(|| cli.download.clone());
+
+    match mal_client.as_ref() {
+        None => {
+            eprintln!(
+                "error: MAL sync is not configured.\n\
+                 Run `anv sync enable mal` to authenticate."
+            );
+            Ok(())
+        }
+        Some(client) => {
+            cmd::sync::run_mal_list(
+                list_type,
+                list_name,
+                translation,
+                binge,
+                episode,
+                auto_play_next,
+                &mut history,
+                &history_path,
+                client,
+                cfg,
+                cli,
+                provider,
+                download,
+            )
+            .await
+        }
+    }
+}
+
 async fn run() -> Result<()> {
     let cli = Cli::parse();
     let cfg = AppConfig::load().unwrap_or_else(|err| {
@@ -248,102 +310,52 @@ async fn run() -> Result<()> {
             .await;
         }
         Some(Commands::Watchlist {
-            binge: wl_binge,
-            dub: wl_dub,
-            episode: wl_episode,
-            next_episode: wl_next,
-            provider: wl_provider,
-            download: wl_download,
+            binge,
+            dub,
+            episode,
+            next_episode,
+            provider,
+            download,
         }) => {
-            let history_path = history_path()?;
-            let mut history = History::load(&history_path)?;
-            let mal_client = build_mal_client_if_enabled(&cfg).await;
-            let binge = *wl_binge || cli.binge || cfg.binge;
-            let auto_play_next = *wl_next || cfg.auto_play_next;
-            let translation = if *wl_dub || cli.dub {
-                Translation::Dub
-            } else {
-                Translation::Sub
-            };
-            let episode = wl_episode.clone().or_else(|| cli.episode.clone());
-            let provider = wl_provider.unwrap_or(cli.provider);
-            let download = wl_download.clone().or_else(|| cli.download.clone());
-            return match mal_client.as_ref() {
-                None => {
-                    eprintln!(
-                        "error: MAL sync is not configured.\n\
-                         Run `anv sync enable mal` to authenticate."
-                    );
-                    Ok(())
-                }
-                Some(client) => {
-                    cmd::sync::run_mal_list(
-                        "plan_to_watch",
-                        "Plan to Watch",
-                        translation,
-                        binge,
-                        episode,
-                        auto_play_next,
-                        &mut history,
-                        &history_path,
-                        client,
-                        &cfg,
-                        &cli,
-                        provider,
-                        download,
-                    )
-                    .await
-                }
-            };
+            return run_list_command(
+                "plan_to_watch",
+                "Plan to Watch",
+                ListSubFlags {
+                    binge: *binge,
+                    dub: *dub,
+                    episode,
+                    next_episode: *next_episode,
+                    provider,
+                    download,
+                },
+                &cli,
+                &cfg,
+            )
+            .await;
         }
         Some(Commands::Watching {
-            binge: w_binge,
-            dub: w_dub,
-            episode: w_episode,
-            next_episode: w_next,
-            provider: w_provider,
-            download: w_download,
+            binge,
+            dub,
+            episode,
+            next_episode,
+            provider,
+            download,
         }) => {
-            let history_path = history_path()?;
-            let mut history = History::load(&history_path)?;
-            let mal_client = build_mal_client_if_enabled(&cfg).await;
-            let binge = *w_binge || cli.binge || cfg.binge;
-            let auto_play_next = *w_next || cfg.auto_play_next;
-            let translation = if *w_dub || cli.dub {
-                Translation::Dub
-            } else {
-                Translation::Sub
-            };
-            let episode = w_episode.clone().or_else(|| cli.episode.clone());
-            let provider = w_provider.unwrap_or(cli.provider);
-            let download = w_download.clone().or_else(|| cli.download.clone());
-            return match mal_client.as_ref() {
-                None => {
-                    eprintln!(
-                        "error: MAL sync is not configured.\n\
-                         Run `anv sync enable mal` to authenticate."
-                    );
-                    Ok(())
-                }
-                Some(client) => {
-                    cmd::sync::run_mal_list(
-                        "watching",
-                        "Watching",
-                        translation,
-                        binge,
-                        episode,
-                        auto_play_next,
-                        &mut history,
-                        &history_path,
-                        client,
-                        &cfg,
-                        &cli,
-                        provider,
-                        download,
-                    )
-                    .await
-                }
-            };
+            return run_list_command(
+                "watching",
+                "Watching",
+                ListSubFlags {
+                    binge: *binge,
+                    dub: *dub,
+                    episode,
+                    next_episode: *next_episode,
+                    provider,
+                    download,
+                },
+                &cli,
+                &cfg,
+            )
+            .await;
         }
         Some(Commands::Sync {
             action:
@@ -368,7 +380,9 @@ async fn run() -> Result<()> {
 
     if cli.manga {
         if cli.download.is_some() {
-            anyhow::bail!("The --download / -D flag is currently only supported for anime streaming.");
+            anyhow::bail!(
+                "The --download / -D flag is currently only supported for anime streaming."
+            );
         }
         let translation = if cli.raw {
             Translation::Raw

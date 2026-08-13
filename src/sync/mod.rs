@@ -68,12 +68,16 @@ pub trait SyncProvider: Send + Sync {
     /// * `show_title` — human-readable title used in prompts and log lines
     /// * `ep_num`     — 1-based episode number just finished
     /// * `provider`   — the active provider (e.g. AnimeProvider)
+    /// * `mal_id`     — already-resolved MAL anime ID when known (e.g. Senshi's
+    ///   native ID, a provider-scraped ID, or a MAL list entry).
+    ///   Trusted when `Some`; falls back to cache/search when `None`.
     fn sync_episode(
         &self,
         show_id: &str,
         show_title: &str,
         ep_num: u32,
         provider: Provider,
+        mal_id: Option<u32>,
     ) -> impl std::future::Future<Output = Result<()>> + Send;
 }
 

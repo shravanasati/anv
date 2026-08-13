@@ -1,18 +1,16 @@
 use anyhow::{Context, Result, bail};
 use std::path::Path;
+use std::time::Duration;
 
 use crate::Cli;
+use crate::aniskip::SkipOptions;
 use crate::cmd::anime::{play_show, select_show_with_provider};
+use crate::cmd::search::aggregate_anime_search;
 use crate::config::AppConfig;
 use crate::history::{History, theme};
-use crate::providers::{
-    AnimeProvider, anidb::AnidbClient, animehub::AnimehubClient, anineko::AninekoClient,
-    senshi::SenshiClient,
-};
+use crate::providers::{AnimeProvider, AnyAnimeClient};
 use crate::sync::mal::{MalClient, MalToken, MalWatchlistEntry};
 use crate::types::{EpisodeCounts, Provider, ShowInfo, Translation};
-
-use crate::aniskip::SkipOptions;
 
 pub async fn run_mal_list(
     list_type: &str,
@@ -58,6 +56,9 @@ pub async fn run_mal_list(
         skip_recap: cli.skip_recap,
     };
 
+    let timeout_secs = cli.timeout.unwrap_or(config.timeout);
+    let search_timeout = Duration::from_secs(timeout_secs);
+
     loop {
         let items: Vec<String> = watchlist
             .iter()
@@ -99,243 +100,224 @@ pub async fn run_mal_list(
 
         let entry: &MalWatchlistEntry = &watchlist[idx];
 
-        if provider == Provider::All {
-            let anidb_client = AnidbClient::new().ok();
-            let animehub_client = AnimehubClient::new().ok();
-            let anineko_client = AninekoClient::new().ok();
-            let senshi_client = SenshiClient::new().ok();
-
-            let mut search_query = entry.title.clone();
-
-            loop {
-                println!(
-                    "Searching across all anime providers for \"{}\"...",
-                    search_query
-                );
-
-                let (anidb_shows, animehub_shows, anineko_shows, senshi_shows) = tokio::join!(
-                    async {
-                        if let Some(ref client) = anidb_client {
-                            client
-                                .search_shows(&search_query, translation)
-                                .await
-                                .unwrap_or_default()
-                        } else {
-                            Vec::new()
-                        }
-                    },
-                    async {
-                        if let Some(ref client) = animehub_client {
-                            client
-                                .search_shows(&search_query, translation)
-                                .await
-                                .unwrap_or_default()
-                        } else {
-                            Vec::new()
-                        }
-                    },
-                    async {
-                        if let Some(ref client) = anineko_client {
-                            client
-                                .search_shows(&search_query, translation)
-                                .await
-                                .unwrap_or_default()
-                        } else {
-                            Vec::new()
-                        }
-                    },
-                    async {
-                        if let Some(ref client) = senshi_client {
-                            client
-                                .search_shows(&search_query, translation)
-                                .await
-                                .unwrap_or_default()
-                        } else {
-                            Vec::new()
-                        }
-                    },
-                );
-
-                let mut combined = Vec::new();
-                for show in anidb_shows {
-                    combined.push((Provider::Anidb, show));
-                }
-                for show in animehub_shows {
-                    combined.push((Provider::Animehub, show));
-                }
-                for show in anineko_shows {
-                    combined.push((Provider::Anineko, show));
-                }
-                for show in senshi_shows {
-                    combined.push((Provider::Senshi, show));
-                }
-
-                if combined.is_empty() {
-                    println!(
-                        "No results for \"{}\" across all providers. Try a different search query (or Esc to go back).",
-                        search_query
-                    );
-                    let query: String = dialoguer::Input::with_theme(&theme)
-                        .with_prompt("Search query")
-                        .allow_empty(true)
-                        .interact_text()?;
-                    if query.trim().is_empty() {
-                        break;
-                    }
-                    search_query = query.trim().to_string();
-                    continue;
-                }
-
-                let selection = select_show_with_provider(&combined, translation, &theme)?;
-                let Some((selected_provider, mut show)) = selection else {
-                    break;
-                };
-
-                show.mal_id = Some(entry.mal_id.to_string());
-                mal_client.cache_id(&show.id, entry.mal_id, selected_provider);
-
-                let client = selected_provider.anime_client()?;
-                return play_show(
-                    &client,
-                    history,
-                    history_path,
-                    translation,
-                    selected_provider,
-                    show,
-                    episode.clone(),
-                    entry.num_episodes_watched.map(|n| n.to_string()),
-                    auto_play_next,
-                    Some(mal_client),
-                    binge,
-                    config,
-                    skip_opts,
-                    download_range.clone(),
-                )
-                .await;
-            }
-            continue;
-        }
-
-        if let Some(cached_id) = mal_client.cached_id(entry.mal_id, provider) {
-            let show = ShowInfo {
-                id: cached_id,
-                title: entry.title.clone(),
-                mal_id: Some(entry.mal_id.to_string()),
-                available_eps: EpisodeCounts::default(),
-            };
-
-            let client = provider.anime_client()?;
-            return play_show(
-                &client,
-                history,
-                history_path,
-                translation,
-                provider,
-                show,
-                episode.clone(),
-                entry.num_episodes_watched.map(|n| n.to_string()),
-                auto_play_next,
-                Some(mal_client),
-                binge,
-                config,
-                skip_opts,
-                download_range.clone(),
-            )
-            .await;
-        }
-
-        let mut search_query = entry.title.clone();
-        let mut chosen_show: Option<ShowInfo> = None;
-
-        loop {
-            println!(
-                "Searching {} for \"{}\"...",
-                provider.display_name(),
-                search_query
-            );
-            let client = provider.anime_client()?;
-            let results = client.search_shows(&search_query, translation).await?;
-
-            if let Some(matched) = results
-                .iter()
-                .find(|s| s.mal_id.as_deref() == Some(&entry.mal_id.to_string()))
-            {
-                chosen_show = Some(matched.clone());
-                break;
-            }
-
-            match results.len() {
-                0 => {
-                    println!(
-                        "No {} results for \"{}\". Try a different search query (or Esc to go back).",
-                        provider.display_name(),
-                        search_query
-                    );
-                    let query: String = dialoguer::Input::with_theme(&theme)
-                        .with_prompt("Search query")
-                        .allow_empty(true)
-                        .interact_text()?;
-                    if query.trim().is_empty() {
-                        break;
-                    }
-                    search_query = query.trim().to_string();
-                }
-                1 => {
-                    chosen_show = Some(results[0].clone());
-                    break;
-                }
-                _ => {
-                    let opts: Vec<String> = results
-                        .iter()
-                        .map(|s| {
-                            let count = s.episode_count_for(translation);
-                            format!("{} [{} ep]", s.title, count)
-                        })
-                        .collect();
-                    let pick = dialoguer::Select::with_theme(&theme)
-                        .with_prompt(format!(
-                            "Which {} entry matches \"{}\"? (Esc = back)",
-                            provider.display_name(),
-                            entry.title
-                        ))
-                        .items(&opts)
-                        .default(0)
-                        .interact_opt()?;
-                    let Some(i) = pick else {
-                        break;
-                    };
-                    chosen_show = Some(results[i].clone());
-                    break;
-                }
-            }
-        }
-
-        let Some(mut show) = chosen_show else {
+        let resolved = resolve_mal_entry(
+            entry,
+            provider,
+            translation,
+            mal_client,
+            &theme,
+            search_timeout,
+            timeout_secs,
+        )
+        .await?;
+        let Some((selected_provider, show)) = resolved else {
             continue;
         };
 
-        show.mal_id = Some(entry.mal_id.to_string());
-        mal_client.cache_id(&show.id, entry.mal_id, provider);
-
-        let client = provider.anime_client()?;
-        return play_show(
+        let client = selected_provider.anime_client()?;
+        return play_with(
             &client,
+            selected_provider,
+            show,
+            entry,
+            mal_client,
             history,
             history_path,
             translation,
-            provider,
-            show,
             episode.clone(),
-            entry.num_episodes_watched.map(|n| n.to_string()),
             auto_play_next,
-            Some(mal_client),
             binge,
             config,
-            skip_opts,
+            &skip_opts,
             download_range.clone(),
         )
         .await;
     }
+}
+
+/// Resolve the provider `(ShowInfo, Provider)` for a MAL list entry: the cached
+/// provider ID if known, otherwise an "all providers" or single-provider search.
+async fn resolve_mal_entry(
+    entry: &MalWatchlistEntry,
+    provider: Provider,
+    translation: Translation,
+    mal_client: &MalClient,
+    theme: &dialoguer::theme::ColorfulTheme,
+    search_timeout: Duration,
+    timeout_secs: u64,
+) -> Result<Option<(Provider, ShowInfo)>> {
+    if provider == Provider::All {
+        return resolve_via_all(entry, translation, theme, search_timeout, timeout_secs).await;
+    }
+
+    if let Some(cached_id) = mal_client.cached_id(entry.mal_id, provider) {
+        return Ok(Some((
+            provider,
+            ShowInfo {
+                id: cached_id,
+                title: entry.title.clone(),
+                mal_id: Some(entry.mal_id.to_string()),
+                available_eps: EpisodeCounts::default(),
+            },
+        )));
+    }
+
+    resolve_via_single(entry, provider, translation, theme).await
+}
+
+/// Search every anime provider for the MAL entry's title and let the user pick.
+async fn resolve_via_all(
+    entry: &MalWatchlistEntry,
+    translation: Translation,
+    theme: &dialoguer::theme::ColorfulTheme,
+    search_timeout: Duration,
+    timeout_secs: u64,
+) -> Result<Option<(Provider, ShowInfo)>> {
+    let mut search_query = entry.title.clone();
+
+    loop {
+        let combined =
+            aggregate_anime_search(&search_query, translation, search_timeout, timeout_secs)
+                .await?;
+
+        if combined.is_empty() {
+            println!(
+                "No results for \"{}\" across all providers. Try a different search query (or Esc to go back).",
+                search_query
+            );
+            let query: String = dialoguer::Input::with_theme(theme)
+                .with_prompt("Search query")
+                .allow_empty(true)
+                .interact_text()?;
+            if query.trim().is_empty() {
+                return Ok(None);
+            }
+            search_query = query.trim().to_string();
+            continue;
+        }
+
+        let selection = select_show_with_provider(&combined, translation, theme)?;
+        return Ok(selection);
+    }
+}
+
+/// Search a single provider for the MAL entry's title, confirming the right
+/// match when multiple results come back.
+async fn resolve_via_single(
+    entry: &MalWatchlistEntry,
+    provider: Provider,
+    translation: Translation,
+    theme: &dialoguer::theme::ColorfulTheme,
+) -> Result<Option<(Provider, ShowInfo)>> {
+    let mut search_query = entry.title.clone();
+    let mut chosen_show: Option<ShowInfo> = None;
+
+    loop {
+        println!(
+            "Searching {} for \"{}\"...",
+            provider.display_name(),
+            search_query
+        );
+        let client = provider.anime_client()?;
+        let results = client.search_shows(&search_query, translation).await?;
+
+        if let Some(matched) = results
+            .iter()
+            .find(|s| s.mal_id.as_deref() == Some(&entry.mal_id.to_string()))
+        {
+            chosen_show = Some(matched.clone());
+            break;
+        }
+
+        match results.len() {
+            0 => {
+                println!(
+                    "No {} results for \"{}\". Try a different search query (or Esc to go back).",
+                    provider.display_name(),
+                    search_query
+                );
+                let query: String = dialoguer::Input::with_theme(theme)
+                    .with_prompt("Search query")
+                    .allow_empty(true)
+                    .interact_text()?;
+                if query.trim().is_empty() {
+                    break;
+                }
+                search_query = query.trim().to_string();
+            }
+            1 => {
+                chosen_show = Some(results[0].clone());
+                break;
+            }
+            _ => {
+                let opts: Vec<String> = results
+                    .iter()
+                    .map(|s| {
+                        let count = s.episode_count_for(translation);
+                        format!("{} [{} ep]", s.title, count)
+                    })
+                    .collect();
+                let pick = dialoguer::Select::with_theme(theme)
+                    .with_prompt(format!(
+                        "Which {} entry matches \"{}\"? (Esc = back)",
+                        provider.display_name(),
+                        entry.title
+                    ))
+                    .items(&opts)
+                    .default(0)
+                    .interact_opt()?;
+                let Some(i) = pick else {
+                    break;
+                };
+                chosen_show = Some(results[i].clone());
+                break;
+            }
+        }
+    }
+
+    let Some(show) = chosen_show else {
+        return Ok(None);
+    };
+    Ok(Some((provider, show)))
+}
+
+/// Set the entry's MAL ID on the show, remember the mapping, and start playback.
+async fn play_with(
+    client: &AnyAnimeClient,
+    provider: Provider,
+    mut show: ShowInfo,
+    entry: &MalWatchlistEntry,
+    mal_client: &MalClient,
+    history: &mut History,
+    history_path: &Path,
+    translation: Translation,
+    episode: Option<String>,
+    auto_play_next: bool,
+    binge: bool,
+    config: &AppConfig,
+    skip_opts: &SkipOptions,
+    download_range: Option<String>,
+) -> Result<()> {
+    show.mal_id = Some(entry.mal_id.to_string());
+    mal_client.cache_id(&show.id, entry.mal_id, provider);
+
+    play_show(
+        client,
+        history,
+        history_path,
+        translation,
+        provider,
+        show,
+        episode,
+        entry.num_episodes_watched.map(|n| n.to_string()),
+        auto_play_next,
+        Some(mal_client),
+        binge,
+        config,
+        skip_opts.clone(),
+        download_range,
+    )
+    .await
 }
 
 pub async fn run_sync_enable_mal(mut cfg: AppConfig) -> Result<()> {

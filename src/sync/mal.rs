@@ -79,8 +79,8 @@ use crate::types::Provider;
 /// - `anidb_entries`   — AniDB slug IDs (e.g. "gate-1759")
 /// - `anineko_entries` — AniNeko show IDs
 /// - `entries`         — legacy field from the AllAnime era; never written
-///                       (`skip_serializing`) so it drains away on next save.
-/// Senshi uses MAL IDs directly as show IDs, so it needs no cache bucket.
+///   (`skip_serializing`) so it drains away on next save.
+///   Senshi uses MAL IDs directly as show IDs, so it needs no cache bucket.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct MalIdCache {
     /// Legacy AllAnime-era bucket — read-only for migration, never written back.
@@ -112,26 +112,35 @@ impl MalIdCache {
             .with_context(|| format!("failed to parse ID cache {}", path.display()))
     }
 
-    pub fn get(&self, show_id: &str, provider: Provider) -> Option<u32> {
+    /// Per-provider cache bucket. Senshi uses MAL IDs as show IDs natively, so
+    /// it has no bucket and `None` is returned (enforced here, not by callers).
+    fn bucket(&self, provider: Provider) -> Option<&HashMap<String, u32>> {
         match provider {
-            Provider::Anidb => self.anidb_entries.get(show_id).copied(),
-            Provider::Anineko => self.anineko_entries.get(show_id).copied(),
-            Provider::Animehub => self.animehub_entries.get(show_id).copied(),
-            // Senshi uses MAL IDs as show IDs natively — no cache lookup needed.
+            Provider::Anidb => Some(&self.anidb_entries),
+            Provider::Anineko => Some(&self.anineko_entries),
+            Provider::Animehub => Some(&self.animehub_entries),
             _ => None,
         }
+    }
+
+    fn bucket_mut(&mut self, provider: Provider) -> Option<&mut HashMap<String, u32>> {
+        match provider {
+            Provider::Anidb => Some(&mut self.anidb_entries),
+            Provider::Anineko => Some(&mut self.anineko_entries),
+            Provider::Animehub => Some(&mut self.animehub_entries),
+            _ => None,
+        }
+    }
+
+    pub fn get(&self, show_id: &str, provider: Provider) -> Option<u32> {
+        self.bucket(provider)?.get(show_id).copied()
     }
 
     /// Reverse lookup: given a MAL anime ID, return the provider show ID if it
     /// was previously cached
     pub fn get_cached_id(&self, mal_id: u32, provider: Provider) -> Option<String> {
-        let map = match provider {
-            Provider::Anidb => &self.anidb_entries,
-            Provider::Anineko => &self.anineko_entries,
-            Provider::Animehub => &self.animehub_entries,
-            _ => return None,
-        };
-        map.iter()
+        self.bucket(provider)?
+            .iter()
             .find(|(_, v)| **v == mal_id)
             .map(|(k, _)| k.clone())
     }
@@ -142,18 +151,8 @@ impl MalIdCache {
         mal_id: u32,
         provider: Provider,
     ) -> Result<()> {
-        match provider {
-            Provider::Anidb => {
-                self.anidb_entries.insert(show_id.to_string(), mal_id);
-            }
-            Provider::Anineko => {
-                self.anineko_entries.insert(show_id.to_string(), mal_id);
-            }
-            Provider::Animehub => {
-                self.animehub_entries.insert(show_id.to_string(), mal_id);
-            }
-            // Senshi uses MAL IDs as show IDs — nothing to cache.
-            _ => {}
+        if let Some(bucket) = self.bucket_mut(provider) {
+            bucket.insert(show_id.to_string(), mal_id);
         }
         let path = Self::cache_path()?;
         if let Some(parent) = path.parent() {
@@ -667,8 +666,9 @@ impl SyncProvider for MalClient {
         show_title: &str,
         ep_num: u32,
         provider: Provider,
+        mal_id: Option<u32>,
     ) -> Result<()> {
-        self.do_sync_episode(show_id, show_title, ep_num, provider)
+        self.do_sync_episode(show_id, show_title, ep_num, provider, mal_id)
             .await
     }
 }
@@ -789,44 +789,68 @@ impl MalClient {
         }
     }
 
-    /// Full sync flow for one episode. Resolves the MAL ID (from internal cache
-    /// or via search + user confirmation), checks current remote state, skips
-    /// if MAL already tracks at least this episode, prompts the user when the
-    /// status is changing, and posts the patch request.
+    /// Full sync flow for one episode. Resolves the MAL ID (from the caller's
+    /// already-resolved ID, the internal cache, or via search + user
+    /// confirmation), checks current remote state, skips if MAL already tracks
+    /// at least this episode, prompts the user when the status is changing, and
+    /// posts the patch request.
     async fn do_sync_episode(
         &self,
         show_id: &str,
         show_title: &str,
         ep_num: u32,
         provider: Provider,
+        resolved_id: Option<u32>,
     ) -> Result<()> {
-        // 1. Resolve MAL ID — check internal cache first.
-        if self.skipped_ids.lock().unwrap().contains(show_id) {
-            return Ok(()); // user already declined this show this session
-        }
-        let cached_id = self.id_cache.lock().unwrap().get(show_id, provider);
-        let mal_id = if let Some(id) = cached_id {
+        let mal_id = if let Some(id) = resolved_id {
+            // Trust the caller-provided ID and remember it for later lookups so
+            // subsequent episodes don't re-resolve (and don't re-prompt).
+            if self
+                .id_cache
+                .lock()
+                .unwrap()
+                .get(show_id, provider)
+                .is_none()
+            {
+                if let Err(err) = self
+                    .id_cache
+                    .lock()
+                    .unwrap()
+                    .insert_and_save(show_id, id, provider)
+                {
+                    eprintln!("[sync] Warning: could not save ID cache: {err}");
+                }
+            }
             id
         } else {
-            match self.resolve_and_confirm_mal_id(show_title).await {
-                Ok(Some(id)) => {
-                    if let Err(err) = self
-                        .id_cache
-                        .lock()
-                        .unwrap()
-                        .insert_and_save(show_id, id, provider)
-                    {
-                        eprintln!("[sync] Warning: could not save ID cache: {err}");
+            // Resolve from cache, else search + user confirmation.
+            if self.skipped_ids.lock().unwrap().contains(show_id) {
+                return Ok(()); // user already declined this show this session
+            }
+            let cached_id = self.id_cache.lock().unwrap().get(show_id, provider);
+            if let Some(id) = cached_id {
+                id
+            } else {
+                match self.resolve_and_confirm_mal_id(show_title).await {
+                    Ok(Some(id)) => {
+                        if let Err(err) = self
+                            .id_cache
+                            .lock()
+                            .unwrap()
+                            .insert_and_save(show_id, id, provider)
+                        {
+                            eprintln!("[sync] Warning: could not save ID cache: {err}");
+                        }
+                        id
                     }
-                    id
-                }
-                Ok(None) => {
-                    self.skipped_ids.lock().unwrap().insert(show_id.to_string());
-                    return Ok(());
-                }
-                Err(err) => {
-                    eprintln!("[sync] MAL ID resolution failed: {err}");
-                    return Ok(());
+                    Ok(None) => {
+                        self.skipped_ids.lock().unwrap().insert(show_id.to_string());
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        eprintln!("[sync] MAL ID resolution failed: {err}");
+                        return Ok(());
+                    }
                 }
             }
         };

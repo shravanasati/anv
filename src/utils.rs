@@ -41,21 +41,3 @@ where
         ),
     }
 }
-
-pub async fn search_opt_with_timeout<F, T>(
-    opt_fut: Option<F>,
-    timeout: Duration,
-) -> (Vec<T>, bool)
-where
-    F: Future<Output = Result<Vec<T>>>,
-{
-    if let Some(fut) = opt_fut {
-        match tokio::time::timeout(timeout, fut).await {
-            Ok(Ok(items)) => (items, false),
-            Ok(Err(_)) => (Vec::new(), false),
-            Err(_) => (Vec::new(), true),
-        }
-    } else {
-        (Vec::new(), false)
-    }
-}
