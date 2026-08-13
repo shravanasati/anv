@@ -1,13 +1,11 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use dialoguer::Select;
-use std::path::PathBuf;
 use tokio::process::Command;
 
 use crate::aniskip::{SkipOptions, prepare_aniskip_args};
 use crate::config::{AppConfig, Quality};
 use crate::history::theme;
-use crate::proxy::{CachedPageTarget, LocalPageProxy};
-use crate::types::{Page, StreamOption};
+use crate::types::StreamOption;
 
 pub const PLAYER_ENV_KEY: &str = "ANV_PLAYER";
 
@@ -180,80 +178,7 @@ pub async fn launch_player(
     Ok(())
 }
 
-pub async fn launch_image_viewer(
-    pages: &[Page],
-    cached_pages: &[Option<PathBuf>],
-    cache_files: &[PathBuf],
-    title: &str,
-    chapter: &str,
-    config: &AppConfig,
-) -> Result<()> {
-    let player = detect_player(config);
-    let mut cmd = build_command(&player)?;
-    let media_title = format!("{title} - Chapter {chapter}");
-    cmd.arg("--quiet");
-    cmd.arg("--terminal=no");
-    cmd.arg(format!("--force-media-title={media_title}"));
-    cmd.arg("--image-display-duration=inf");
 
-    if !cached_pages.iter().any(|p| p.is_some()) {
-        add_direct_url_args(&mut cmd, pages);
-    } else if cached_pages.iter().all(|p| p.is_some()) {
-        for path in cached_pages.iter().flatten() {
-            cmd.arg(path);
-        }
-    } else {
-        let targets: Vec<CachedPageTarget> = pages
-            .iter()
-            .cloned()
-            .zip(cache_files.iter().cloned())
-            .map(|(page, path)| CachedPageTarget { page, path })
-            .collect();
-        match LocalPageProxy::start(targets) {
-            Ok(mut proxy) => {
-                for idx in 0..pages.len() {
-                    cmd.arg(proxy.page_url(idx));
-                }
-                println!("Launching viewer for Chapter {chapter}...");
-                let status = cmd.status().await.context("failed to launch viewer")?;
-                proxy.shutdown();
-                if !status.success() && status.code() != Some(2) {
-                    bail!("viewer exited with status {status}");
-                }
-                return Ok(());
-            }
-            Err(err) => {
-                eprintln!("Local cache proxy unavailable ({err}). Falling back to direct URLs.");
-                add_direct_url_args(&mut cmd, pages);
-            }
-        }
-    }
-
-    println!("Launching viewer for Chapter {chapter}...");
-    let status = cmd.status().await.context("failed to launch viewer")?;
-    if !status.success() && status.code() != Some(2) {
-        bail!("viewer exited with status {status}");
-    }
-    Ok(())
-}
-
-fn add_direct_url_args(cmd: &mut Command, pages: &[Page]) {
-    if let Some(first) = pages.first() {
-        for (key, value) in &first.headers {
-            if key.eq_ignore_ascii_case("user-agent") {
-                cmd.arg(format!("--user-agent={value}"));
-            } else if key.eq_ignore_ascii_case("referer") {
-                cmd.arg(format!("--referrer={value}"));
-                cmd.arg(format!("--http-header-fields=Referer: {value}"));
-            } else {
-                cmd.arg(format!("--http-header-fields={}: {value}", key));
-            }
-        }
-    }
-    for page in pages {
-        cmd.arg(&page.url);
-    }
-}
 
 pub fn format_hls_player_url(url: &str, is_hls: bool) -> String {
     if is_hls && !url.contains(".m3u8") {

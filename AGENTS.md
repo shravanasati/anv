@@ -2,8 +2,8 @@
 
 This file documents the conventions and requirements that **must** be followed
 when adding a new provider to the `anv` codebase.
-It is derived from a full analysis of every existing anime and manga provider
-(`anidb`, `animehub`, `anineko`, `senshi`, `mangadex`, `mangapill`) and all the
+It is derived from a full analysis of every existing anime provider
+(`anidb`, `animehub`, `anineko`, `senshi`) and all the
 systems that interact with them (history, MAL sync, CLI routing, config,
 downloader, etc.).
 
@@ -65,7 +65,7 @@ search mode, download support, or the `watchlist`/`watching` commands.
   NewProvider,
   ```
   Keep `#[serde(other)] Unknown` as the last catch-all variant.
-- [ ] Add the variant to `Provider::is_anime()` (or `is_manga()` for manga providers).
+- [ ] Add the variant to `Provider::is_anime()`.
 - [ ] Add a human-readable name in `Provider::display_name()`.
 - [ ] Add it to the history deserialisation test in `src/types.rs` tests if
       you add a serde alias (follow the existing `test_allanime_deserialization_alias`
@@ -263,22 +263,6 @@ always uses `AnidbQuality::Highest` for non-AniDB providers.
 | `src/cmd/sync.rs` | Add arm for watchlist/watching commands |
 | `src/config.rs` | Add `<Name>Config` section if provider needs configurable settings |
 | `README.md` | Document the new provider |
-
----
-
-## Adding a New Manga Provider — Checklist
-
-The process mirrors the anime checklist but uses `MangaProvider` instead:
-
-- [ ] Implement `MangaProvider` trait:
-  - `search_mangas` → `Vec<MangaInfo>` (with `id`, `title`, `available_chapters`)
-  - `fetch_chapters` → `Vec<Chapter>` (with `id` for API use and `label` for display)
-  - `fetch_pages` → `Vec<Page>` (with `url` and `headers`)
-- [ ] Add `Provider::<Name>` variant with `is_manga()` returning `true`.
-- [ ] Add routing in `src/cmd/anime.rs` history-resume manga branch and in
-      `src/cmd/manga.rs` search/read flow.
-- [ ] No MAL ID cache interaction needed for manga providers.
-- [ ] No `fetch_mal_id` required.
 
 ---
 

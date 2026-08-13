@@ -5,7 +5,6 @@ use std::path::Path;
 
 use crate::Cli;
 use crate::aniskip::SkipOptions;
-use crate::cmd::manga::read_manga;
 use crate::cmd::media::{
     ConsumeOutcome, MediaContext, MediaEntry, MediaLoopConfig, run_media_loop,
 };
@@ -13,9 +12,9 @@ use crate::cmd::search::aggregate_anime_search;
 use crate::config::AppConfig;
 use crate::history::{History, theme};
 use crate::player::{launch_player, select_stream_by_quality};
-use crate::providers::{AnimeProvider, MangaProvider};
+use crate::providers::AnimeProvider;
 use crate::sync::SyncProvider;
-use crate::types::{ChapterCounts, EpisodeCounts, MangaInfo, Provider, ShowInfo, Translation};
+use crate::types::{EpisodeCounts, Provider, ShowInfo, Translation};
 use crate::utils::{search_single_with_timeout, sorted_episode_labels};
 
 pub async fn run_anime_flow<P: SyncProvider>(
@@ -47,79 +46,43 @@ pub async fn run_anime_flow<P: SyncProvider>(
                 entry.provider
             };
 
-            if entry.is_manga {
-                if download_range.is_some() {
-                    bail!(
-                        "The --download / -D flag is currently only supported for anime streaming."
-                    );
-                }
-                let client = target_provider.manga_client()?;
-                let manga_info =
-                    if target_provider == entry.provider || entry.provider == Provider::All {
-                        MangaInfo {
-                            id: entry.show_id.clone(),
-                            title: entry.show_title.clone(),
-                            available_chapters: ChapterCounts::default(),
-                        }
-                    } else {
-                        resolve_manga_info(&client, &entry.show_title, entry.translation).await?
-                    };
-                read_manga(
-                    &client,
-                    entry.translation,
-                    manga_info,
-                    history,
-                    history_path,
-                    if auto_play_next {
-                        None
-                    } else {
-                        Some(entry.episode.clone())
-                    },
-                    auto_play_next,
-                    cli.cache_dir.as_deref(),
-                    target_provider,
-                    config,
-                )
-                .await?;
-            } else {
-                let client = target_provider.anime_client()?;
-                let show_info =
-                    if target_provider == entry.provider || entry.provider == Provider::All {
-                        ShowInfo {
-                            id: entry.show_id.clone(),
-                            title: entry.show_title.clone(),
-                            mal_id: None,
-                            available_eps: EpisodeCounts::default(),
-                        }
-                    } else {
-                        resolve_show_info(&client, &entry.show_title, entry.translation).await?
-                    };
-                play_show(
-                    &client,
-                    history,
-                    history_path,
-                    entry.translation,
-                    target_provider,
-                    show_info,
-                    if auto_play_next {
-                        None
-                    } else {
-                        Some(entry.episode.clone())
-                    },
-                    if auto_play_next {
-                        Some(entry.episode.clone())
-                    } else {
-                        None
-                    },
-                    auto_play_next,
-                    sync_provider,
-                    binge,
-                    config,
-                    skip_opts,
-                    download_range.clone(),
-                )
-                .await?;
-            }
+            let client = target_provider.anime_client()?;
+            let show_info =
+                if target_provider == entry.provider || entry.provider == Provider::All {
+                    ShowInfo {
+                        id: entry.show_id.clone(),
+                        title: entry.show_title.clone(),
+                        mal_id: None,
+                        available_eps: EpisodeCounts::default(),
+                    }
+                } else {
+                    resolve_show_info(&client, &entry.show_title, entry.translation).await?
+                };
+            play_show(
+                &client,
+                history,
+                history_path,
+                entry.translation,
+                target_provider,
+                show_info,
+                if auto_play_next {
+                    None
+                } else {
+                    Some(entry.episode.clone())
+                },
+                if auto_play_next {
+                    Some(entry.episode.clone())
+                } else {
+                    None
+                },
+                auto_play_next,
+                sync_provider,
+                binge,
+                config,
+                skip_opts,
+                download_range.clone(),
+            )
+            .await?;
         }
         return Ok(());
     }
@@ -447,7 +410,6 @@ pub async fn play_show<P: SyncProvider>(
         history_path,
         translation,
         provider,
-        false,
         MediaLoopConfig {
             select_prompt: "Episode to play (type to search, Esc to cancel)",
             use_fuzzy: false,
@@ -475,17 +437,4 @@ async fn resolve_show_info<C: AnimeProvider>(
     }
 }
 
-async fn resolve_manga_info<C: MangaProvider>(
-    client: &C,
-    title: &str,
-    translation: Translation,
-) -> Result<MangaInfo> {
-    let mangas = client.search_mangas(title, translation).await?;
-    if let Some(matched) = mangas.iter().find(|m| m.title.eq_ignore_ascii_case(title)) {
-        Ok(matched.clone())
-    } else if let Some(first) = mangas.first() {
-        Ok(first.clone())
-    } else {
-        bail!("No results found for \"{}\"", title);
-    }
-}
+

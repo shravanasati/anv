@@ -1,18 +1,14 @@
-use std::path::PathBuf;
-
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use config::AppConfig;
 
 mod aniskip;
-mod cache;
 mod cmd;
 mod config;
 mod downloader;
 mod history;
 mod player;
 mod providers;
-mod proxy;
 mod sync;
 mod types;
 mod utils;
@@ -24,8 +20,8 @@ use types::{Provider, Translation};
 #[derive(Debug, Parser)]
 #[command(
     name = "anv",
-    about = "Stream anime or read manga via mpv.",
-    long_about = "anv lets you search, stream anime, and read manga directly from the terminal.",
+    about = "Stream anime via mpv.",
+    long_about = "anv lets you search and stream anime directly from the terminal.",
     version
 )]
 pub struct Cli {
@@ -33,19 +29,15 @@ pub struct Cli {
     #[arg(short = 'd', long)]
     pub dub: bool,
 
-    /// Use raw/untranslated source (no subtitles). For manga: show raw scans.
+    /// Use raw/untranslated source (no subtitles).
     #[arg(short = 'r', long)]
     pub raw: bool,
-
-    /// Search and read manga instead of anime.
-    #[arg(short = 'm', long)]
-    pub manga: bool,
 
     /// Automatically play the next episode without prompting (binge mode).
     #[arg(short = 'b', long)]
     pub binge: bool,
 
-    /// Content provider to use for streaming or reading.
+    /// Content provider to use for streaming.
     #[arg(
         short = 'p',
         long,
@@ -59,11 +51,7 @@ pub struct Cli {
     #[arg(short = 'T', long, value_name = "SECONDS")]
     pub timeout: Option<u64>,
 
-    /// Override the directory used to cache manga page images.
-    #[arg(short = 'C', long, value_name = "DIR")]
-    pub cache_dir: Option<PathBuf>,
-
-    /// Start playback/reading from a specific episode or chapter number.
+    /// Start playback from a specific episode number.
     #[arg(short = 'e', long, value_name = "EPISODE")]
     pub episode: Option<String>,
 
@@ -101,17 +89,17 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Browse your watch/read history and resume from where you left off.
+    /// Browse your watch history and resume from where you left off.
     History {
         /// Automatically play the next episode without prompting (binge mode).
         #[arg(short = 'b', long)]
         binge: bool,
 
-        /// Resume from the next episode/chapter instead of the last watched.
+        /// Resume from the next episode instead of the last watched.
         #[arg(short = 'n', long = "next-episode")]
         next_episode: bool,
 
-        /// Content provider to use for streaming or reading.
+        /// Content provider to use for streaming.
         #[arg(short = 'p', long, value_enum, value_name = "PROVIDER")]
         provider: Option<Provider>,
 
@@ -135,11 +123,11 @@ pub enum Commands {
         #[arg(short = 'e', long, value_name = "EPISODE")]
         episode: Option<String>,
 
-        /// Resume from the next episode/chapter instead of the last watched.
+        /// Resume from the next episode instead of the last watched.
         #[arg(short = 'n', long = "next-episode")]
         next_episode: bool,
 
-        /// Content provider to use for streaming or reading.
+        /// Content provider to use for streaming.
         #[arg(short = 'p', long, value_enum, value_name = "PROVIDER")]
         provider: Option<Provider>,
 
@@ -163,11 +151,11 @@ pub enum Commands {
         #[arg(short = 'e', long, value_name = "EPISODE")]
         episode: Option<String>,
 
-        /// Resume from the next episode/chapter instead of the last watched.
+        /// Resume from the next episode instead of the last watched.
         #[arg(short = 'n', long = "next-episode")]
         next_episode: bool,
 
-        /// Content provider to use for streaming or reading.
+        /// Content provider to use for streaming.
         #[arg(short = 'p', long, value_enum, value_name = "PROVIDER")]
         provider: Option<Provider>,
 
@@ -377,28 +365,6 @@ async fn run() -> Result<()> {
 
     // Build MAL client if sync is enabled and a token exists
     let mal_client = build_mal_client_if_enabled(&cfg).await;
-
-    if cli.manga {
-        if cli.download.is_some() {
-            anyhow::bail!(
-                "The --download / -D flag is currently only supported for anime streaming."
-            );
-        }
-        let translation = if cli.raw {
-            Translation::Raw
-        } else {
-            Translation::Sub
-        };
-        return cmd::manga::run_manga_flow(
-            &cli,
-            translation,
-            &mut history,
-            &history_path,
-            cfg.auto_play_next,
-            &cfg,
-        )
-        .await;
-    }
 
     let translation = if cli.dub {
         Translation::Dub

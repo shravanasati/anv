@@ -18,8 +18,6 @@ pub struct HistoryEntry {
     pub translation: Translation,
     #[serde(default)]
     pub provider: Provider,
-    #[serde(default)]
-    pub is_manga: bool,
     pub watched_at: DateTime<Utc>,
 }
 
@@ -53,11 +51,11 @@ impl History {
     }
 
     pub fn upsert(&mut self, entry: HistoryEntry) {
-        if let Some(pos) = self.entries.iter().position(|e| {
-            e.show_id == entry.show_id
-                && e.translation == entry.translation
-                && e.is_manga == entry.is_manga
-        }) {
+        if let Some(pos) = self
+            .entries
+            .iter()
+            .position(|e| e.show_id == entry.show_id && e.translation == entry.translation)
+        {
             self.entries.remove(pos);
         }
         self.entries.insert(0, entry);
@@ -66,14 +64,7 @@ impl History {
     pub fn last_episode(&self, show_id: &str, translation: Translation) -> Option<String> {
         self.entries
             .iter()
-            .find(|e| e.show_id == show_id && e.translation == translation && !e.is_manga)
-            .map(|e| e.episode.clone())
-    }
-
-    pub fn last_chapter(&self, show_id: &str, translation: Translation) -> Option<String> {
-        self.entries
-            .iter()
-            .find(|e| e.show_id == show_id && e.translation == translation && e.is_manga)
+            .find(|e| e.show_id == show_id && e.translation == translation)
             .map(|e| e.episode.clone())
     }
 
@@ -87,20 +78,10 @@ impl History {
             .entries
             .iter()
             .map(|entry| {
-                let tag = if entry.is_manga {
-                    if entry.translation == Translation::Raw {
-                        "Raw"
-                    } else {
-                        "Man"
-                    }
-                } else {
-                    entry.translation.label()
-                };
                 format!(
-                    "[{}] {} \u{00b7} {} {} \u{00b7} watched {}",
-                    tag,
+                    "[{}] {} \u{00b7} episode {} \u{00b7} watched {}",
+                    entry.translation.label(),
                     entry.show_title,
-                    if entry.is_manga { "chapter" } else { "episode" },
                     entry.episode,
                     entry.watched_at.format("%Y-%m-%d %H:%M")
                 )
@@ -139,7 +120,6 @@ mod tests {
                     "episode": "1",
                     "translation": "sub",
                     "provider": "future_provider",
-                    "is_manga": false,
                     "watched_at": "2026-08-13T12:00:00Z"
                 }
             ]

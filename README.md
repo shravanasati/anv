@@ -54,7 +54,7 @@ Search and stream:
 anv "bocchi the rock"
 ```
 
-Specify a provider (e.g. `anidb`, `anineko`, `senshi`, `mangadex`, `mangapill`):
+Specify a provider (e.g. `anidb`, `anineko`, `senshi`, `animehub`):
 ```bash
 anv -p anidb "bocchi the rock"
 ```
@@ -72,16 +72,6 @@ anv "solo leveling" # uses AniSkip API
 Disable skipping or skip recaps on the fly:
 ```bash
 anv --skip-op=false --skip-recap=true "bocchi the rock"
-```
-
-Read manga chapters:
-```bash
-anv --manga "one punch man"
-```
-
-Read manga with a custom cache directory:
-```bash
-anv --manga --cache-dir "/tmp/anv-cache" "one punch man"
 ```
 
 Jump back to last night's cliffhanger:
@@ -266,8 +256,7 @@ After each episode finishes playing:
 ## Tips and tweaks
 - Keep `mpv` upgraded – some providers only serve DASH/HLS variants that older builds struggle with.
 - If you want to experiment with custom players, set `player` in `~/.config/anv/config.toml` or use the `ANV_PLAYER` environment variable (env overrides config).
-- Use `-p <PROVIDER>` or `--provider <PROVIDER>` to specify a content provider (`anidb`, `anineko`, `senshi`, `mangadex`, `mangapill`).
-- Use `--cache-dir <DIR>` if you want manga page cache files somewhere specific (faster disk, larger partition, etc.).
+- Use `-p <PROVIDER>` or `--provider <PROVIDER>` to specify a content provider (`anidb`, `anineko`, `senshi`, `animehub`).
 - Use `-e <EP>` to skip the interactive episode selector and start playing a specific episode immediately.
 - Use `-n` or `--next-episode` to automatically resume from the next episode based on your history or MAL status.
 - Set `auto_play_next = true` in your config to make `-n` the default behavior.

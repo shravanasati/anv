@@ -38,14 +38,7 @@ feature work.
   `.timeout(Duration::from_secs(15))`, use the shared browser `USER_AGENT`, add
   `.error_for_status()?`, and reuse the retry pattern from 2.10.
 
-### 2.2 Mangapill client has no HTTP timeout
-- **Files:** `src/providers/mangapill.rs:18-21`
-- **Problem:** The reqwest client omits `.timeout()`; every other provider uses
-  15s (anidb/animehub/anineko/senshi) or 30s (mangadex).
-- **Why it matters:** A hung origin hangs the whole search command forever.
-- **Solution:** Add `build_client(user_agent, timeout_secs)` in
-  `src/providers/mod.rs` and use it in all six providers (fixes ordering
-  inconsistencies too).
+### 2.2 [REMOVED] Mangapill client had no HTTP timeout (manga providers removed)
 
 ### 2.3 AniSkip episode semantics wrong for cumulative labels
 - **Files:** `src/aniskip.rs:134-136`, `src/cmd/anime.rs:584-591`

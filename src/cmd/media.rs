@@ -30,6 +30,7 @@ pub enum ConsumeOutcome {
 }
 
 /// Per-iteration context passed to the `consume` closure.
+#[allow(dead_code)]
 pub struct MediaContext<'a> {
     /// Highest (latest) available label, used to reposition on fetch failures.
     pub latest: &'a str,
@@ -69,7 +70,6 @@ pub async fn run_media_loop<F, Fut>(
     history_path: &Path,
     translation: Translation,
     provider: Provider,
-    is_manga: bool,
     cfg: MediaLoopConfig<'_>,
     consume: F,
 ) -> Result<()>
@@ -183,7 +183,6 @@ where
             episode: chosen.label.clone(),
             translation,
             provider,
-            is_manga,
             watched_at: Utc::now(),
         });
         history.save(history_path)?;
@@ -353,7 +352,6 @@ mod tests {
             &history_path,
             Translation::Sub,
             Provider::Senshi,
-            false,
             MediaLoopConfig {
                 select_prompt: "Select",
                 use_fuzzy: false,
