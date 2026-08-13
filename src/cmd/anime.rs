@@ -742,6 +742,27 @@ pub async fn play_show<P: SyncProvider>(
     );
 
     let last_watched_local = history.last_episode(&show.id, translation);
+    // Resolve override_last_watched by index when the label isn't in the
+    // episode list (e.g. MAL says "11 watched" but provider lists "67"-"78").
+    let override_last_watched = override_last_watched.map(|label| {
+        if episodes.contains(&label) {
+            label.clone()
+        } else {
+            label
+                .parse::<usize>()
+                .ok()
+                .filter(|&n| n >= 1)
+                .and_then(|n| sorted_episodes.get(n - 1))
+                .map(|resolved| {
+                    println!(
+                        "Last-watched label '{}' resolved by index to episode '{}'.",
+                        label, resolved
+                    );
+                    resolved.clone()
+                })
+                .unwrap_or(label)
+        }
+    });
     let last_watched = override_last_watched.or(last_watched_local);
     if let Some(prev) = &last_watched {
         println!("Last watched {} episode: {}.", translation.label(), prev);
@@ -882,7 +903,15 @@ pub async fn play_show<P: SyncProvider>(
         history.save(history_path)?;
 
         if let Some(sync_prov) = sync_provider {
-            let ep_num = chosen.parse::<u32>().unwrap_or(0);
+            // Use the 1-based position of `chosen` in sorted_episodes as the
+            // MAL episode count. This correctly converts cumulative provider
+            // labels (e.g. "30" = ep 6 of a 12-ep season) to the
+            // season-relative count that MAL expects.
+            let ep_num = sorted_episodes
+                .iter()
+                .position(|ep| ep == &chosen)
+                .map(|pos| (pos + 1) as u32)
+                .unwrap_or_else(|| chosen.parse::<u32>().unwrap_or(0));
             if let Err(err) = sync_prov
                 .sync_episode(&show.id, &show.title, ep_num, provider)
                 .await
