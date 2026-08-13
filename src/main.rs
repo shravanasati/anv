@@ -394,8 +394,9 @@ async fn run() -> Result<()> {
 
     if !cli.provider.is_anime() {
         anyhow::bail!(
-            "Provider '{}' does not support anime. Valid anime providers: all, anidb, anineko, senshi",
-            cli.provider.display_name()
+            "Provider '{}' does not support anime. Valid anime providers: {}",
+            cli.provider.display_name(),
+            Provider::valid_anime_providers()
         );
     }
     let binge = cli.binge || cfg.binge;

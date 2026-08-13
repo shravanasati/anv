@@ -31,8 +31,9 @@ pub async fn run_mal_list(
 ) -> Result<()> {
     if !provider.is_anime() {
         bail!(
-            "Provider '{}' does not support anime. Valid anime providers: all, anidb, animehub, anineko, senshi",
-            provider.display_name()
+            "Provider '{}' does not support anime. Valid anime providers: {}",
+            provider.display_name(),
+            Provider::valid_anime_providers()
         );
     }
 

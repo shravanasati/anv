@@ -314,13 +314,13 @@ mod tests {
         let legacy_toml = r#"
 player = "mpv"
 binge = true
-api_proxy = "https://my-relay.workers.dev"
+max_results = 10
 
 [aniskip]
 skip_op = true
 "#;
         let config: AppConfig = toml::from_str(legacy_toml)
-            .expect("Should deserialize despite unknown api_proxy field");
+            .expect("Should deserialize despite unknown max_results field");
         assert_eq!(config.player, "mpv");
         assert!(config.binge);
         assert_eq!(config.download.downloader, DownloaderEngine::Ffmpeg);

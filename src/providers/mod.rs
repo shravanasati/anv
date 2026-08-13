@@ -150,5 +150,11 @@ impl Provider {
     pub fn all_manga() -> &'static [Provider] {
         &[Provider::Mangadex, Provider::Mangapill]
     }
+
+    pub fn valid_anime_providers() -> String {
+        let mut names = vec!["all"];
+        names.extend(Provider::all_anime().iter().map(|p| p.cli_name()));
+        names.join(", ")
+    }
 }
 

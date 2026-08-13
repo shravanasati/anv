@@ -43,7 +43,7 @@ impl WatchStatus {
 /// Data passed to a sync provider when updating status.
 #[derive(Debug, Clone)]
 pub struct SyncUpdate {
-    /// Anime title as displayed in anv (from AllAnime).
+    /// Anime title as displayed in anv (from the active provider).
     pub title: String,
     /// Current episode just watched (1-indexed integer).
     pub episode: u32,
@@ -64,7 +64,7 @@ pub trait SyncProvider: Send + Sync {
     /// remote state, prompt the user when confirmation is needed, and post
     /// the update.  Called once after each episode finishes playing.
     ///
-    /// * `show_id`    — the local provider ID (e.g. AllAnime show ID)
+    /// * `show_id`    — the local provider show ID
     /// * `show_title` — human-readable title used in prompts and log lines
     /// * `ep_num`     — 1-based episode number just finished
     /// * `provider`   — the active provider (e.g. AnimeProvider)

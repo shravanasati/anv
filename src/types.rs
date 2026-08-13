@@ -163,6 +163,19 @@ impl Provider {
             Provider::Unknown => "Unknown",
         }
     }
+
+    pub fn cli_name(self) -> &'static str {
+        match self {
+            Provider::All => "all",
+            Provider::Anidb => "anidb",
+            Provider::Anineko => "anineko",
+            Provider::Animehub => "animehub",
+            Provider::Mangadex => "mangadex",
+            Provider::Mangapill => "mangapill",
+            Provider::Senshi => "senshi",
+            Provider::Unknown => "unknown",
+        }
+    }
 }
 
 #[cfg(test)]

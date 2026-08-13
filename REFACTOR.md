@@ -7,58 +7,7 @@ feature work.
 
 ## 1. Docs & Dependency Debt
 
-### 1.1 Stale README references to removed AllAnime flow
-- **Files:** `README.md:268-271`
-- **Problem:** README still documents the CLI flow for AllAnime, a provider that
-  was removed and replaced by AniDB. The general usage description in
-  `Cargo.toml:8` ("Stream anime or read manga from AllAnime...") has the same
-  issue.
-- **Why it matters:** Onboarding users are told about a provider that doesn't
-  exist; confused bug reports follow.
-- **Solution:** Rewrite the flow section to describe the current provider set
-  (anidb, animehub, anineko, senshi, mangadex, mangapill) and update the
-  `Cargo.toml` description.
-
-### 1.2 Stale provider list in user-facing error message
-- **Files:** `src/main.rs:397`, `src/cmd/sync.rs:34`
-- **Problem:** main.rs prints "Valid anime providers: all, anidb, anineko,
-  senshi" — **omitting animehub** — while `cmd/sync.rs:34` has the correct list.
-- **Why it matters:** The error actively misleads users who type a valid provider.
-- **Solution:** Derive the message from `Provider::all_anime()` instead of a
-  hard-coded string, so it can never drift again.
-
-### 1.3 Stale doc comments referencing AllAnime
-- **Files:** `src/sync/mod.rs:46,67`
-- **Problem:** Comments still say "(from AllAnime)" / "AllAnime show ID".
-- **Why it matters:** Tribal-knowledge drift; confusing when reading the sync layer.
-- **Solution:** Reword to reference the current provider set or generic "provider
-  show ID".
-
-### 1.4 Unused dependencies (AllAnime-era relics)
-- **Files:** `Cargo.toml:36-41`
-- **Problem:** `aes`, `aes-gcm`, `ctr`, `sha2`, `base64`, `futures` are declared
-  but have **zero** usages repo-wide. They were the relay/api_proxy decryption
-  stack for the removed AllAnime provider.
-- **Why it matters:** Unnecessary compile time, larger dependency tree, stale
-  supply-chain surface.
-- **Solution:** Delete all six from `Cargo.toml`. They'll be pruned from
-  `Cargo.lock` on the next build.
-
-### 1.5 Stale config test fixture
-- **Files:** `src/config.rs:317`
-- **Problem:** Test fixture references `api_proxy = "https://my-relay.workers.dev"`,
-  a long-removed feature.
-- **Why it matters:** Comment context is stale; new readers assume an
-  `api_proxy` config exists.
-- **Solution:** Update the fixture to a currently-relevant unknown field.
-
-### 1.6 README provider table not verified
-- **Files:** `README.md`
-- **Problem:** AGENTS.md §14 requires the provider table to list every provider;
-  it has drifted before (animehub was added without a full README pass).
-- **Why it matters:** Documentation debt compounds with every new provider.
-- **Solution:** Audit the table against `Provider::is_anime()`/`is_manga()`
-  and note known limitations per provider.
+Finished.
 
 ## 2. Architecture Debt
 

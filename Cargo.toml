@@ -5,7 +5,7 @@ edition = "2024"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/shravanasati/anv"
-description = "Stream anime or read manga from AllAnime straight into mpv from your terminal."
+description = "Stream anime or read manga from your terminal into mpv."
 keywords = ["anime", "cli", "streaming", "mpv"]
 categories = ["command-line-utilities", "multimedia::video"]
 authors = ["Vedant Asati", "Shravan Asati"]
@@ -33,12 +33,6 @@ open = "5.3.3"
 url = "2.5.8"
 scraper = "0.22"
 shlex = "1.3.0"
-aes = "0.8"
-aes-gcm = "0.10.3"
-ctr = "0.9"
-sha2 = "0.10"
-base64 = "0.22"
-futures = "0.3.32"
 
 # The profile that 'dist' will build with
 [profile.dist]

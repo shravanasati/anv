@@ -263,15 +263,6 @@ After each episode finishes playing:
    - `start_date` is sent when you first start watching (not on list, or previously `plan_to_watch`).
    - `finish_date` is sent when anv marks the show as `completed`. -->
 
-<!-- ## How the flow feels
-
-1. CLI asks AllAnime for matching series and shows you a clean list.
-2. Pick a show; anv fetches available episode numbers for the chosen translation.
-3. Episode picker highlights your last watched entry so Enter instantly resumes; Esc backs out like a prompt should.
-4. Streams are resolved through AllAnime's clock API and piped to `mpv` with the right headers and subtitles.
-5. History gets updated in `~/.local/share/anv/history.json` (Linux; platform-specific on others) so the next session remembers everything.
-6. If MAL sync is enabled, watch progress is synced silently or with a brief confirmation depending on what changed. -->
-
 ## Tips and tweaks
 - Keep `mpv` upgraded – some providers only serve DASH/HLS variants that older builds struggle with.
 - If you want to experiment with custom players, set `player` in `~/.config/anv/config.toml` or use the `ANV_PLAYER` environment variable (env overrides config).
