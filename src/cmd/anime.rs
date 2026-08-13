@@ -12,8 +12,7 @@ use crate::history::{History, HistoryEntry, theme};
 use crate::player::{launch_player, select_stream_by_quality};
 use crate::providers::{
     AnimeProvider, MangaProvider, anidb::AnidbClient, animehub::AnimehubClient,
-    anineko::AninekoClient, mangadex::MangaDexClient, mangapill::MangapillClient,
-    senshi::SenshiClient,
+    anineko::AninekoClient, senshi::SenshiClient,
 };
 use crate::sync::SyncProvider;
 use crate::types::{ChapterCounts, EpisodeCounts, MangaInfo, Provider, ShowInfo, Translation};
@@ -55,240 +54,78 @@ pub async fn run_anime_flow<P: SyncProvider>(
                 if download_range.is_some() {
                     bail!("The --download / -D flag is currently only supported for anime streaming.");
                 }
-                match target_provider {
-                    Provider::Anidb
-                    | Provider::Animehub
-                    | Provider::Anineko
-                    | Provider::Senshi
-                    | Provider::Unknown => {
-                        bail!("Provider '{}' does not support manga.", target_provider.display_name());
+                let client = target_provider.manga_client()?;
+                let manga_info = if target_provider == entry.provider
+                    || entry.provider == Provider::All
+                {
+                    MangaInfo {
+                        id: entry.show_id.clone(),
+                        title: entry.show_title.clone(),
+                        available_chapters: ChapterCounts::default(),
                     }
-                    Provider::All | Provider::Mangadex => {
-                        let client = MangaDexClient::new()?;
-                        let manga_info = if target_provider == entry.provider
-                            || entry.provider == Provider::All
-                        {
-                            MangaInfo {
-                                id: entry.show_id.clone(),
-                                title: entry.show_title.clone(),
-                                available_chapters: ChapterCounts::default(),
-                            }
-                        } else {
-                            resolve_manga_info(&client, &entry.show_title, entry.translation)
-                                .await?
-                        };
-                        read_manga(
-                            &client,
-                            entry.translation,
-                            manga_info,
-                            history,
-                            history_path,
-                            if auto_play_next {
-                                None
-                            } else {
-                                Some(entry.episode.clone())
-                            },
-                            auto_play_next,
-                            cli.cache_dir.as_deref(),
-                            Provider::Mangadex,
-                            config,
-                        )
-                        .await?;
-                    }
-                    Provider::Mangapill => {
-                        let client = MangapillClient::new()?;
-                        let manga_info = if target_provider == entry.provider {
-                            MangaInfo {
-                                id: entry.show_id.clone(),
-                                title: entry.show_title.clone(),
-                                available_chapters: ChapterCounts::default(),
-                            }
-                        } else {
-                            resolve_manga_info(&client, &entry.show_title, entry.translation)
-                                .await?
-                        };
-                        read_manga(
-                            &client,
-                            entry.translation,
-                            manga_info,
-                            history,
-                            history_path,
-                            if auto_play_next {
-                                None
-                            } else {
-                                Some(entry.episode.clone())
-                            },
-                            auto_play_next,
-                            cli.cache_dir.as_deref(),
-                            Provider::Mangapill,
-                            config,
-                        )
-                        .await?;
-                    }
-                }
+                } else {
+                    resolve_manga_info(&client, &entry.show_title, entry.translation).await?
+                };
+                read_manga(
+                    &client,
+                    entry.translation,
+                    manga_info,
+                    history,
+                    history_path,
+                    if auto_play_next {
+                        None
+                    } else {
+                        Some(entry.episode.clone())
+                    },
+                    auto_play_next,
+                    cli.cache_dir.as_deref(),
+                    target_provider,
+                    config,
+                )
+                .await?;
             } else {
-                match target_provider {
-                    Provider::Animehub => {
-                        let client = AnimehubClient::new()?;
-                        let show_info = if target_provider == entry.provider {
-                            ShowInfo {
-                                id: entry.show_id.clone(),
-                                title: entry.show_title.clone(),
-                                mal_id: None,
-                                available_eps: EpisodeCounts::default(),
-                            }
+                let client = target_provider.anime_client()?;
+                let show_info = if target_provider == entry.provider
+                    || entry.provider == Provider::All
+                {
+                    ShowInfo {
+                        id: entry.show_id.clone(),
+                        title: entry.show_title.clone(),
+                        mal_id: if target_provider == Provider::Senshi {
+                            Some(entry.show_id.clone())
                         } else {
-                            resolve_show_info(&client, &entry.show_title, entry.translation).await?
-                        };
-                        play_show(
-                            &client,
-                            history,
-                            history_path,
-                            entry.translation,
-                            Provider::Animehub,
-                            show_info,
-                            if auto_play_next {
-                                None
-                            } else {
-                                Some(entry.episode.clone())
-                            },
-                            if auto_play_next {
-                                Some(entry.episode.clone())
-                            } else {
-                                None
-                            },
-                            auto_play_next,
-                            sync_provider,
-                            binge,
-                            config,
-                            skip_opts,
-                            download_range.clone(),
-                        )
-                        .await?;
+                            None
+                        },
+                        available_eps: EpisodeCounts::default(),
                     }
-                    Provider::Anineko => {
-                        let client = AninekoClient::new()?;
-                        let show_info = if target_provider == entry.provider {
-                            ShowInfo {
-                                id: entry.show_id.clone(),
-                                title: entry.show_title.clone(),
-                                mal_id: None,
-                                available_eps: EpisodeCounts::default(),
-                            }
-                        } else {
-                            resolve_show_info(&client, &entry.show_title, entry.translation).await?
-                        };
-                        play_show(
-                            &client,
-                            history,
-                            history_path,
-                            entry.translation,
-                            Provider::Anineko,
-                            show_info,
-                            if auto_play_next {
-                                None
-                            } else {
-                                Some(entry.episode.clone())
-                            },
-                            if auto_play_next {
-                                Some(entry.episode.clone())
-                            } else {
-                                None
-                            },
-                            auto_play_next,
-                            sync_provider,
-                            binge,
-                            config,
-                            skip_opts,
-                            download_range.clone(),
-                        )
-                        .await?;
-                    }
-                    Provider::Senshi => {
-                        let client = SenshiClient::new()?;
-                        let show_info = if target_provider == entry.provider {
-                            ShowInfo {
-                                id: entry.show_id.clone(),
-                                title: entry.show_title.clone(),
-                                mal_id: Some(entry.show_id.clone()),
-                                available_eps: EpisodeCounts::default(),
-                            }
-                        } else {
-                            resolve_show_info(&client, &entry.show_title, entry.translation).await?
-                        };
-                        play_show(
-                            &client,
-                            history,
-                            history_path,
-                            entry.translation,
-                            Provider::Senshi,
-                            show_info,
-                            if auto_play_next {
-                                None
-                            } else {
-                                Some(entry.episode.clone())
-                            },
-                            if auto_play_next {
-                                Some(entry.episode.clone())
-                            } else {
-                                None
-                            },
-                            auto_play_next,
-                            sync_provider,
-                            binge,
-                            config,
-                            skip_opts,
-                            download_range.clone(),
-                        )
-                        .await?;
-                    }
-                    Provider::Anidb | Provider::All => {
-                        let client = AnidbClient::new()?;
-                        let show_info = if target_provider == entry.provider
-                            || entry.provider == Provider::All
-                        {
-                            ShowInfo {
-                                id: entry.show_id.clone(),
-                                title: entry.show_title.clone(),
-                                mal_id: None,
-                                available_eps: EpisodeCounts::default(),
-                            }
-                        } else {
-                            resolve_show_info(&client, &entry.show_title, entry.translation).await?
-                        };
-                        play_show(
-                            &client,
-                            history,
-                            history_path,
-                            entry.translation,
-                            Provider::Anidb,
-                            show_info,
-                            if auto_play_next {
-                                None
-                            } else {
-                                Some(entry.episode.clone())
-                            },
-                            if auto_play_next {
-                                Some(entry.episode.clone())
-                            } else {
-                                None
-                            },
-                            auto_play_next,
-                            sync_provider,
-                            binge,
-                            config,
-                            skip_opts,
-                            download_range.clone(),
-                        )
-                        .await?;
-                    }
-                    _ => {
-                        bail!(
-                            "Provider '{}' does not support anime streaming.",
-                            target_provider.display_name()
-                        );
-                    }
-                }
+                } else {
+                    resolve_show_info(&client, &entry.show_title, entry.translation).await?
+                };
+                play_show(
+                    &client,
+                    history,
+                    history_path,
+                    entry.translation,
+                    target_provider,
+                    show_info,
+                    if auto_play_next {
+                        None
+                    } else {
+                        Some(entry.episode.clone())
+                    },
+                    if auto_play_next {
+                        Some(entry.episode.clone())
+                    } else {
+                        None
+                    },
+                    auto_play_next,
+                    sync_provider,
+                    binge,
+                    config,
+                    skip_opts,
+                    download_range.clone(),
+                )
+                .await?;
             }
         }
         return Ok(());
@@ -306,158 +143,6 @@ pub async fn run_anime_flow<P: SyncProvider>(
     let search_timeout = std::time::Duration::from_secs(timeout_secs);
 
     match provider {
-        Provider::Animehub => {
-            let client = AnimehubClient::new()?;
-            let shows = search_single_with_timeout(
-                search_timeout,
-                "AnimeHub",
-                timeout_secs,
-                client.search_shows(&query, translation),
-            )
-            .await?;
-            if shows.is_empty() {
-                bail!(
-                    "No results for \"{}\" ({}) on AnimeHub",
-                    query,
-                    translation.label()
-                );
-            }
-            let show = select_show(&shows, translation, &theme)?;
-            let Some(show) = show else {
-                return Ok(());
-            };
-            play_show(
-                &client,
-                history,
-                history_path,
-                translation,
-                Provider::Animehub,
-                show,
-                cli.episode.clone(),
-                None,
-                auto_play_next,
-                sync_provider,
-                binge,
-                config,
-                skip_opts,
-                download_range.clone(),
-            )
-            .await
-        }
-        Provider::Senshi => {
-            let client = SenshiClient::new()?;
-            let shows = search_single_with_timeout(
-                search_timeout,
-                "Senshi",
-                timeout_secs,
-                client.search_shows(&query, translation),
-            )
-            .await?;
-            if shows.is_empty() {
-                bail!(
-                    "No results for \"{}\" ({}) on Senshi",
-                    query,
-                    translation.label()
-                );
-            }
-            let show = select_show(&shows, translation, &theme)?;
-            let Some(show) = show else {
-                return Ok(());
-            };
-            play_show(
-                &client,
-                history,
-                history_path,
-                translation,
-                Provider::Senshi,
-                show,
-                cli.episode.clone(),
-                None,
-                auto_play_next,
-                sync_provider,
-                binge,
-                config,
-                skip_opts,
-                download_range.clone(),
-            )
-            .await
-        }
-        Provider::Anineko => {
-            let client = AninekoClient::new()?;
-            let shows = search_single_with_timeout(
-                search_timeout,
-                "AniNeko",
-                timeout_secs,
-                client.search_shows(&query, translation),
-            )
-            .await?;
-            if shows.is_empty() {
-                bail!(
-                    "No results for \"{}\" ({}) on AniNeko",
-                    query,
-                    translation.label()
-                );
-            }
-            let show = select_show(&shows, translation, &theme)?;
-            let Some(show) = show else {
-                return Ok(());
-            };
-            play_show(
-                &client,
-                history,
-                history_path,
-                translation,
-                Provider::Anineko,
-                show,
-                cli.episode.clone(),
-                None,
-                auto_play_next,
-                sync_provider,
-                binge,
-                config,
-                skip_opts,
-                download_range.clone(),
-            )
-            .await
-        }
-        Provider::Anidb => {
-            let client = AnidbClient::new()?;
-            let shows = search_single_with_timeout(
-                search_timeout,
-                "AniDB",
-                timeout_secs,
-                client.search_shows(&query, translation),
-            )
-            .await?;
-            if shows.is_empty() {
-                bail!(
-                    "No results for \"{}\" ({}) on AniDB",
-                    query,
-                    translation.label()
-                );
-            }
-            let show = select_show(&shows, translation, &theme)?;
-            let Some(show) = show else {
-                return Ok(());
-            };
-            play_show(
-                &client,
-                history,
-                history_path,
-                translation,
-                Provider::Anidb,
-                show,
-                cli.episode.clone(),
-                None,
-                auto_play_next,
-                sync_provider,
-                binge,
-                config,
-                skip_opts,
-                download_range.clone(),
-            )
-            .await
-        }
         Provider::All => {
             let anidb_client = AnidbClient::new().ok();
             let animehub_client = AnimehubClient::new().ok();
@@ -543,99 +228,63 @@ pub async fn run_anime_flow<P: SyncProvider>(
                 return Ok(());
             };
 
-            match selected_provider {
-                Provider::Anidb => {
-                    let client =
-                        anidb_client.expect("AniDB client must be present if item was selected");
-                    play_show(
-                        &client,
-                        history,
-                        history_path,
-                        translation,
-                        Provider::Anidb,
-                        show,
-                        cli.episode.clone(),
-                        None,
-                        auto_play_next,
-                        sync_provider,
-                        binge,
-                        config,
-                        skip_opts,
-                        download_range.clone(),
-                    )
-                    .await
-                }
-                Provider::Animehub => {
-                    let client = animehub_client
-                        .expect("AnimeHub client must be present if item was selected");
-                    play_show(
-                        &client,
-                        history,
-                        history_path,
-                        translation,
-                        Provider::Animehub,
-                        show,
-                        cli.episode.clone(),
-                        None,
-                        auto_play_next,
-                        sync_provider,
-                        binge,
-                        config,
-                        skip_opts,
-                        download_range.clone(),
-                    )
-                    .await
-                }
-                Provider::Anineko => {
-                    let client = anineko_client
-                        .expect("AniNeko client must be present if item was selected");
-                    play_show(
-                        &client,
-                        history,
-                        history_path,
-                        translation,
-                        Provider::Anineko,
-                        show,
-                        cli.episode.clone(),
-                        None,
-                        auto_play_next,
-                        sync_provider,
-                        binge,
-                        config,
-                        skip_opts,
-                        download_range.clone(),
-                    )
-                    .await
-                }
-                Provider::Senshi => {
-                    let client =
-                        senshi_client.expect("Senshi client must be present if item was selected");
-                    play_show(
-                        &client,
-                        history,
-                        history_path,
-                        translation,
-                        Provider::Senshi,
-                        show,
-                        cli.episode.clone(),
-                        None,
-                        auto_play_next,
-                        sync_provider,
-                        binge,
-                        config,
-                        skip_opts,
-                        download_range.clone(),
-                    )
-                    .await
-                }
-                _ => unreachable!(),
-            }
+            let client = selected_provider.anime_client()?;
+            play_show(
+                &client,
+                history,
+                history_path,
+                translation,
+                selected_provider,
+                show,
+                cli.episode.clone(),
+                None,
+                auto_play_next,
+                sync_provider,
+                binge,
+                config,
+                skip_opts,
+                download_range.clone(),
+            )
+            .await
         }
         _ => {
-            bail!(
-                "Provider '{}' does not support anime streaming.",
-                cli.provider.display_name()
-            );
+            let client = provider.anime_client()?;
+            let shows = search_single_with_timeout(
+                search_timeout,
+                provider.display_name(),
+                timeout_secs,
+                client.search_shows(&query, translation),
+            )
+            .await?;
+            if shows.is_empty() {
+                bail!(
+                    "No results for \"{}\" ({}) on {}",
+                    query,
+                    translation.label(),
+                    provider.display_name()
+                );
+            }
+            let show = select_show(&shows, translation, &theme)?;
+            let Some(show) = show else {
+                return Ok(());
+            };
+            play_show(
+                &client,
+                history,
+                history_path,
+                translation,
+                provider,
+                show,
+                cli.episode.clone(),
+                None,
+                auto_play_next,
+                sync_provider,
+                binge,
+                config,
+                skip_opts,
+                download_range.clone(),
+            )
+            .await
         }
     }
 }
@@ -648,11 +297,7 @@ fn select_show(
     let options: Vec<String> = shows
         .iter()
         .map(|s| {
-            let count = match translation {
-                Translation::Sub => s.available_eps.sub,
-                Translation::Dub => s.available_eps.dub,
-                Translation::Raw => 0,
-            };
+            let count = s.episode_count_for(translation);
             if count > 0 {
                 format!("{} [{} episodes]", s.title, count)
             } else {
@@ -676,11 +321,7 @@ pub(crate) fn select_show_with_provider(
     let options: Vec<String> = items
         .iter()
         .map(|(provider, s)| {
-            let count = match translation {
-                Translation::Sub => s.available_eps.sub,
-                Translation::Dub => s.available_eps.dub,
-                Translation::Raw => 0,
-            };
+            let count = s.episode_count_for(translation);
             if count > 0 {
                 format!(
                     "{} [{}] [{} episodes]",

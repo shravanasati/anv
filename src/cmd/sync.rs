@@ -193,89 +193,24 @@ pub async fn run_mal_list(
                 show.mal_id = Some(entry.mal_id.to_string());
                 mal_client.cache_id(&show.id, entry.mal_id, selected_provider);
 
-                match selected_provider {
-                    Provider::Anidb => {
-                        let client = AnidbClient::new()?;
-                        return play_show(
-                            &client,
-                            history,
-                            history_path,
-                            translation,
-                            Provider::Anidb,
-                            show,
-                            episode.clone(),
-                            entry.num_episodes_watched.map(|n| n.to_string()),
-                            auto_play_next,
-                            Some(mal_client),
-                            binge,
-                            config,
-                            skip_opts,
-                            download_range.clone(),
-                        )
-                        .await;
-                    }
-                    Provider::Animehub => {
-                        let client = AnimehubClient::new()?;
-                        return play_show(
-                            &client,
-                            history,
-                            history_path,
-                            translation,
-                            Provider::Animehub,
-                            show,
-                            episode.clone(),
-                            entry.num_episodes_watched.map(|n| n.to_string()),
-                            auto_play_next,
-                            Some(mal_client),
-                            binge,
-                            config,
-                            skip_opts,
-                            download_range.clone(),
-                        )
-                        .await;
-                    }
-                    Provider::Anineko => {
-                        let client = AninekoClient::new()?;
-                        return play_show(
-                            &client,
-                            history,
-                            history_path,
-                            translation,
-                            Provider::Anineko,
-                            show,
-                            episode.clone(),
-                            entry.num_episodes_watched.map(|n| n.to_string()),
-                            auto_play_next,
-                            Some(mal_client),
-                            binge,
-                            config,
-                            skip_opts,
-                            download_range.clone(),
-                        )
-                        .await;
-                    }
-                    Provider::Senshi => {
-                        let client = SenshiClient::new()?;
-                        return play_show(
-                            &client,
-                            history,
-                            history_path,
-                            translation,
-                            Provider::Senshi,
-                            show,
-                            episode.clone(),
-                            entry.num_episodes_watched.map(|n| n.to_string()),
-                            auto_play_next,
-                            Some(mal_client),
-                            binge,
-                            config,
-                            skip_opts,
-                            download_range.clone(),
-                        )
-                        .await;
-                    }
-                    _ => unreachable!(),
-                }
+                let client = selected_provider.anime_client()?;
+                return play_show(
+                    &client,
+                    history,
+                    history_path,
+                    translation,
+                    selected_provider,
+                    show,
+                    episode.clone(),
+                    entry.num_episodes_watched.map(|n| n.to_string()),
+                    auto_play_next,
+                    Some(mal_client),
+                    binge,
+                    config,
+                    skip_opts,
+                    download_range.clone(),
+                )
+                .await;
             }
             continue;
         }
@@ -288,89 +223,24 @@ pub async fn run_mal_list(
                 available_eps: EpisodeCounts::default(),
             };
 
-            match provider {
-                Provider::Anidb => {
-                    let client = AnidbClient::new()?;
-                    return play_show(
-                        &client,
-                        history,
-                        history_path,
-                        translation,
-                        Provider::Anidb,
-                        show,
-                        episode.clone(),
-                        entry.num_episodes_watched.map(|n| n.to_string()),
-                        auto_play_next,
-                        Some(mal_client),
-                        binge,
-                        config,
-                        skip_opts,
-                        download_range.clone(),
-                    )
-                    .await;
-                }
-                Provider::Animehub => {
-                    let client = AnimehubClient::new()?;
-                    return play_show(
-                        &client,
-                        history,
-                        history_path,
-                        translation,
-                        Provider::Animehub,
-                        show,
-                        episode.clone(),
-                        entry.num_episodes_watched.map(|n| n.to_string()),
-                        auto_play_next,
-                        Some(mal_client),
-                        binge,
-                        config,
-                        skip_opts,
-                        download_range.clone(),
-                    )
-                    .await;
-                }
-                Provider::Anineko => {
-                    let client = AninekoClient::new()?;
-                    return play_show(
-                        &client,
-                        history,
-                        history_path,
-                        translation,
-                        Provider::Anineko,
-                        show,
-                        episode.clone(),
-                        entry.num_episodes_watched.map(|n| n.to_string()),
-                        auto_play_next,
-                        Some(mal_client),
-                        binge,
-                        config,
-                        skip_opts,
-                        download_range.clone(),
-                    )
-                    .await;
-                }
-                Provider::Senshi => {
-                    let client = SenshiClient::new()?;
-                    return play_show(
-                        &client,
-                        history,
-                        history_path,
-                        translation,
-                        Provider::Senshi,
-                        show,
-                        episode.clone(),
-                        entry.num_episodes_watched.map(|n| n.to_string()),
-                        auto_play_next,
-                        Some(mal_client),
-                        binge,
-                        config,
-                        skip_opts,
-                        download_range.clone(),
-                    )
-                    .await;
-                }
-                _ => unreachable!(),
-            }
+            let client = provider.anime_client()?;
+            return play_show(
+                &client,
+                history,
+                history_path,
+                translation,
+                provider,
+                show,
+                episode.clone(),
+                entry.num_episodes_watched.map(|n| n.to_string()),
+                auto_play_next,
+                Some(mal_client),
+                binge,
+                config,
+                skip_opts,
+                download_range.clone(),
+            )
+            .await;
         }
 
         let mut search_query = entry.title.clone();
@@ -382,25 +252,8 @@ pub async fn run_mal_list(
                 provider.display_name(),
                 search_query
             );
-            let results = match provider {
-                Provider::Anidb => {
-                    let client = AnidbClient::new()?;
-                    client.search_shows(&search_query, translation).await?
-                }
-                Provider::Animehub => {
-                    let client = AnimehubClient::new()?;
-                    client.search_shows(&search_query, translation).await?
-                }
-                Provider::Anineko => {
-                    let client = AninekoClient::new()?;
-                    client.search_shows(&search_query, translation).await?
-                }
-                Provider::Senshi => {
-                    let client = SenshiClient::new()?;
-                    client.search_shows(&search_query, translation).await?
-                }
-                _ => unreachable!(),
-            };
+            let client = provider.anime_client()?;
+            let results = client.search_shows(&search_query, translation).await?;
 
             if let Some(matched) = results
                 .iter()
@@ -434,11 +287,7 @@ pub async fn run_mal_list(
                     let opts: Vec<String> = results
                         .iter()
                         .map(|s| {
-                            let count = match translation {
-                                Translation::Sub => s.available_eps.sub,
-                                Translation::Dub => s.available_eps.dub,
-                                Translation::Raw => 0,
-                            };
+                            let count = s.episode_count_for(translation);
                             format!("{} [{} ep]", s.title, count)
                         })
                         .collect();
@@ -467,89 +316,24 @@ pub async fn run_mal_list(
         show.mal_id = Some(entry.mal_id.to_string());
         mal_client.cache_id(&show.id, entry.mal_id, provider);
 
-        match provider {
-            Provider::Anidb => {
-                let client = AnidbClient::new()?;
-                return play_show(
-                    &client,
-                    history,
-                    history_path,
-                    translation,
-                    Provider::Anidb,
-                    show,
-                    episode.clone(),
-                    entry.num_episodes_watched.map(|n| n.to_string()),
-                    auto_play_next,
-                    Some(mal_client),
-                    binge,
-                    config,
-                    skip_opts,
-                    download_range.clone(),
-                )
-                .await;
-            }
-            Provider::Animehub => {
-                let client = AnimehubClient::new()?;
-                return play_show(
-                    &client,
-                    history,
-                    history_path,
-                    translation,
-                    Provider::Animehub,
-                    show,
-                    episode.clone(),
-                    entry.num_episodes_watched.map(|n| n.to_string()),
-                    auto_play_next,
-                    Some(mal_client),
-                    binge,
-                    config,
-                    skip_opts,
-                    download_range.clone(),
-                )
-                .await;
-            }
-            Provider::Anineko => {
-                let client = AninekoClient::new()?;
-                return play_show(
-                    &client,
-                    history,
-                    history_path,
-                    translation,
-                    Provider::Anineko,
-                    show,
-                    episode.clone(),
-                    entry.num_episodes_watched.map(|n| n.to_string()),
-                    auto_play_next,
-                    Some(mal_client),
-                    binge,
-                    config,
-                    skip_opts,
-                    download_range.clone(),
-                )
-                .await;
-            }
-            Provider::Senshi => {
-                let client = SenshiClient::new()?;
-                return play_show(
-                    &client,
-                    history,
-                    history_path,
-                    translation,
-                    Provider::Senshi,
-                    show,
-                    episode.clone(),
-                    entry.num_episodes_watched.map(|n| n.to_string()),
-                    auto_play_next,
-                    Some(mal_client),
-                    binge,
-                    config,
-                    skip_opts,
-                    download_range.clone(),
-                )
-                .await;
-            }
-            _ => unreachable!(),
-        }
+        let client = provider.anime_client()?;
+        return play_show(
+            &client,
+            history,
+            history_path,
+            translation,
+            provider,
+            show,
+            episode.clone(),
+            entry.num_episodes_watched.map(|n| n.to_string()),
+            auto_play_next,
+            Some(mal_client),
+            binge,
+            config,
+            skip_opts,
+            download_range.clone(),
+        )
+        .await;
     }
 }
 

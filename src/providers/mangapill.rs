@@ -9,6 +9,7 @@ use crate::types::{Chapter, ChapterCounts, MangaInfo, Page, Translation};
 
 const MANGAPILL_BASE_URL: &str = "https://mangapill.com";
 
+#[derive(Debug, Clone)]
 pub struct MangapillClient {
     client: Client,
 }

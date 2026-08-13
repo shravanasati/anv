@@ -44,74 +44,6 @@ pub async fn run_manga_flow(
     let search_timeout = std::time::Duration::from_secs(timeout_secs);
 
     match cli.provider {
-        Provider::Mangadex => {
-            let client = MangaDexClient::new()?;
-            let mangas = search_single_with_timeout(
-                search_timeout,
-                "MangaDex",
-                timeout_secs,
-                client.search_mangas(&query, translation),
-            )
-            .await?;
-            if mangas.is_empty() {
-                bail!(
-                    "No results for \"{}\" ({}) on MangaDex",
-                    query,
-                    translation.label()
-                );
-            }
-            let manga = select_manga(&mangas, translation, &theme)?;
-            let Some(manga) = manga else {
-                return Ok(());
-            };
-            read_manga(
-                &client,
-                translation,
-                manga,
-                history,
-                history_path,
-                cli.episode.clone(),
-                auto_play_next,
-                cli.cache_dir.as_deref(),
-                Provider::Mangadex,
-                config,
-            )
-            .await
-        }
-        Provider::Mangapill => {
-            let client = MangapillClient::new()?;
-            let mangas = search_single_with_timeout(
-                search_timeout,
-                "Mangapill",
-                timeout_secs,
-                client.search_mangas(&query, translation),
-            )
-            .await?;
-            if mangas.is_empty() {
-                bail!(
-                    "No results for \"{}\" ({}) on Mangapill",
-                    query,
-                    translation.label()
-                );
-            }
-            let manga = select_manga(&mangas, translation, &theme)?;
-            let Some(manga) = manga else {
-                return Ok(());
-            };
-            read_manga(
-                &client,
-                translation,
-                manga,
-                history,
-                history_path,
-                cli.episode.clone(),
-                auto_play_next,
-                cli.cache_dir.as_deref(),
-                Provider::Mangapill,
-                config,
-            )
-            .await
-        }
         Provider::All => {
             let mangadex = MangaDexClient::new().ok();
             let mangapill = MangapillClient::new().ok();
@@ -167,46 +99,56 @@ pub async fn run_manga_flow(
                 return Ok(());
             };
 
-            match selected_provider {
-                Provider::Mangadex => {
-                    let client = mangadex.expect("MangaDex client must exist if selected");
-                    read_manga(
-                        &client,
-                        translation,
-                        manga,
-                        history,
-                        history_path,
-                        cli.episode.clone(),
-                        auto_play_next,
-                        cli.cache_dir.as_deref(),
-                        Provider::Mangadex,
-                        config,
-                    )
-                    .await
-                }
-                Provider::Mangapill => {
-                    let client = mangapill.expect("Mangapill client must exist if selected");
-                    read_manga(
-                        &client,
-                        translation,
-                        manga,
-                        history,
-                        history_path,
-                        cli.episode.clone(),
-                        auto_play_next,
-                        cli.cache_dir.as_deref(),
-                        Provider::Mangapill,
-                        config,
-                    )
-                    .await
-                }
-                _ => unreachable!(),
-            }
+            let client = selected_provider.manga_client()?;
+            read_manga(
+                &client,
+                translation,
+                manga,
+                history,
+                history_path,
+                cli.episode.clone(),
+                auto_play_next,
+                cli.cache_dir.as_deref(),
+                selected_provider,
+                config,
+            )
+            .await
         }
-        _ => bail!(
-            "Provider '{}' does not support manga.",
-            cli.provider.display_name()
-        ),
+        _ => {
+            let client = cli.provider.manga_client()?;
+            let mangas = search_single_with_timeout(
+                search_timeout,
+                cli.provider.display_name(),
+                timeout_secs,
+                client.search_mangas(&query, translation),
+            )
+            .await?;
+            if mangas.is_empty() {
+                bail!(
+                    "No results for \"{}\" ({}) on {}",
+                    query,
+                    translation.label(),
+                    cli.provider.display_name()
+                );
+            }
+            let manga = select_manga(&mangas, translation, &theme)?;
+            let Some(manga) = manga else {
+                return Ok(());
+            };
+            read_manga(
+                &client,
+                translation,
+                manga,
+                history,
+                history_path,
+                cli.episode.clone(),
+                auto_play_next,
+                cli.cache_dir.as_deref(),
+                cli.provider,
+                config,
+            )
+            .await
+        }
     }
 }
 
@@ -218,11 +160,7 @@ fn select_manga(
     let options: Vec<String> = mangas
         .iter()
         .map(|m| {
-            let count = match translation {
-                Translation::Sub => m.available_chapters.sub,
-                Translation::Raw => m.available_chapters.raw,
-                Translation::Dub => 0,
-            };
+            let count = m.chapter_count_for(translation);
             format!("{} [{} chapters]", m.title, count)
         })
         .collect();
@@ -242,11 +180,7 @@ fn select_manga_with_provider(
     let options: Vec<String> = items
         .iter()
         .map(|(provider, m)| {
-            let count = match translation {
-                Translation::Sub => m.available_chapters.sub,
-                Translation::Raw => m.available_chapters.raw,
-                Translation::Dub => 0,
-            };
+            let count = m.chapter_count_for(translation);
             if count > 0 {
                 format!(
                     "{} [{}] [{} chapters]",

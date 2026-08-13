@@ -42,6 +42,16 @@ pub struct ShowInfo {
     pub available_eps: EpisodeCounts,
 }
 
+impl ShowInfo {
+    pub fn episode_count_for(&self, translation: Translation) -> usize {
+        match translation {
+            Translation::Sub => self.available_eps.sub,
+            Translation::Dub => self.available_eps.dub,
+            Translation::Raw => 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct EpisodeCounts {
     pub sub: usize,
@@ -53,6 +63,16 @@ pub struct MangaInfo {
     pub id: String,
     pub title: String,
     pub available_chapters: ChapterCounts,
+}
+
+impl MangaInfo {
+    pub fn chapter_count_for(&self, translation: Translation) -> usize {
+        match translation {
+            Translation::Sub => self.available_chapters.sub,
+            Translation::Raw => self.available_chapters.raw,
+            Translation::Dub => 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]

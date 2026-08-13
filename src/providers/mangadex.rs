@@ -11,6 +11,7 @@ use crate::types::{Chapter, ChapterCounts, MangaInfo, Page, Translation};
 const MANGADEX_API_URL: &str = "https://api.mangadex.org";
 const CHAPTER_PAGE_LIMIT: usize = 500;
 
+#[derive(Debug, Clone)]
 pub struct MangaDexClient {
     client: Client,
 }
