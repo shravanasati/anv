@@ -142,6 +142,9 @@ binge = false
 #                  instead of the last watched episode in history/watchlist
 auto_play_next = false
 
+# preferred_provider — content provider to use by default when -p / --provider flag is omitted (default: "all")
+preferred_provider = "all"
+
 [mal]
 # client_id — your MAL API client ID
 #               register at https://myanimelist.net/apiconfig

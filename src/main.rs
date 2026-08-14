@@ -39,14 +39,8 @@ pub struct Cli {
     pub binge: bool,
 
     /// Content provider to use for streaming.
-    #[arg(
-        short = 'p',
-        long,
-        default_value = "all",
-        value_enum,
-        value_name = "PROVIDER"
-    )]
-    pub provider: Provider,
+    #[arg(short = 'p', long, value_enum, value_name = "PROVIDER")]
+    pub provider: Option<Provider>,
 
     /// Timeout in seconds for provider search requests (overrides config).
     #[arg(short = 'T', long, value_name = "SECONDS")]
@@ -229,7 +223,7 @@ async fn run_list_command(
         Translation::Sub
     };
     let episode = sub.episode.clone().or_else(|| cli.episode.clone());
-    let provider = sub.provider.unwrap_or(cli.provider);
+    let provider = sub.provider.or(cli.provider).unwrap_or(cfg.preferred_provider);
     let download = sub.download.clone().or_else(|| cli.download.clone());
 
     match mal_client.as_ref() {
@@ -281,7 +275,7 @@ async fn run() -> Result<()> {
             let mal_client = build_mal_client_if_enabled(&cfg).await;
             let binge = *history_binge || cli.binge || cfg.binge;
             let auto_play_next = *history_next || cfg.auto_play_next;
-            let provider = history_provider.unwrap_or(cli.provider);
+            let provider_override = history_provider.or(cli.provider);
             let download = history_download.clone().or_else(|| cli.download.clone());
             return cmd::anime::run_anime_flow(
                 &cli,
@@ -293,7 +287,7 @@ async fn run() -> Result<()> {
                 mal_client.as_ref(),
                 binge,
                 auto_play_next,
-                provider,
+                provider_override,
                 download,
             )
             .await;
@@ -373,13 +367,6 @@ async fn run() -> Result<()> {
         Translation::Sub
     };
 
-    if !cli.provider.is_anime() {
-        anyhow::bail!(
-            "Provider '{}' does not support anime. Valid anime providers: {}",
-            cli.provider.display_name(),
-            Provider::valid_anime_providers()
-        );
-    }
     let binge = cli.binge || cfg.binge;
     let auto_play_next = cfg.auto_play_next;
     cmd::anime::run_anime_flow(

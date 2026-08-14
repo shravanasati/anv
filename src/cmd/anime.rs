@@ -27,31 +27,26 @@ pub async fn run_anime_flow<P: SyncProvider>(
     sync_provider: Option<&P>,
     binge: bool,
     auto_play_next: bool,
-    provider: Provider,
+    override_provider: Option<Provider>,
     download_range: Option<String>,
 ) -> Result<()> {
     let skip_opts = SkipOptions::from(cli);
 
     if history_mode {
         if let Some(entry) = history.select_entry()? {
-            let target_provider = if provider != Provider::All {
-                provider
-            } else {
-                entry.provider
-            };
+            let target_provider = override_provider.unwrap_or(entry.provider);
 
             let client = target_provider.anime_client()?;
-            let show_info =
-                if target_provider == entry.provider || entry.provider == Provider::All {
-                    ShowInfo {
-                        id: entry.show_id.clone(),
-                        title: entry.show_title.clone(),
-                        mal_id: None,
-                        available_eps: EpisodeCounts::default(),
-                    }
-                } else {
-                    resolve_show_info(&client, &entry.show_title, entry.translation).await?
-                };
+            let show_info = if target_provider == entry.provider {
+                ShowInfo {
+                    id: entry.show_id.clone(),
+                    title: entry.show_title.clone(),
+                    mal_id: None,
+                    available_eps: EpisodeCounts::default(),
+                }
+            } else {
+                resolve_show_info(&client, &entry.show_title, entry.translation).await?
+            };
             play_show(
                 &client,
                 history,
@@ -91,6 +86,15 @@ pub async fn run_anime_flow<P: SyncProvider>(
 
     let timeout_secs = cli.timeout.unwrap_or(config.timeout);
     let search_timeout = std::time::Duration::from_secs(timeout_secs);
+
+    let provider = override_provider.unwrap_or(config.preferred_provider);
+    if !provider.is_anime() {
+        bail!(
+            "Provider '{}' does not support anime. Valid anime providers: {}",
+            provider.display_name(),
+            Provider::valid_anime_providers()
+        );
+    }
 
     match provider {
         Provider::All => {

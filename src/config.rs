@@ -6,6 +6,7 @@ use std::{fs, path::PathBuf};
 use toml::Value;
 
 use crate::downloader::DownloaderEngine;
+use crate::types::Provider;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AppConfig {
@@ -26,6 +27,9 @@ pub struct AppConfig {
     /// anime in search results, watchlists, and watching menus.
     #[serde(default)]
     pub prefer_english_titles: bool,
+
+    #[serde(default)]
+    pub preferred_provider: Provider,
 
     #[serde(default)]
     pub quality: Quality,
@@ -136,6 +140,9 @@ const CONFIG_HEADER: &str = "# anv configuration
 #                         title in search results, watchlists, and watching menus
 #                         (default: false)
 #
+# preferred_provider    -- content provider to use by default when -p / --provider flag
+#                         is omitted (default: \"all\")
+#
 # [mal]
 #   client_id -- your MAL API client ID
 #               register at https://myanimelist.net/apiconfig
@@ -184,6 +191,7 @@ impl Default for AppConfig {
             auto_play_next: false,
             timeout: default_timeout(),
             prefer_english_titles: false,
+            preferred_provider: Provider::default(),
             quality: Quality::default(),
             mal: MalConfig::default(),
             sync: SyncConfig::default(),
@@ -364,5 +372,17 @@ timeout = 5
 "#;
         let custom_config: AppConfig = toml::from_str(custom_toml).unwrap();
         assert_eq!(custom_config.aniskip.timeout, 5);
+    }
+
+    #[test]
+    fn test_preferred_provider_config_deserialization() {
+        let default_config: AppConfig = toml::from_str("").unwrap();
+        assert_eq!(default_config.preferred_provider, Provider::All);
+
+        let custom_toml = r#"
+preferred_provider = "senshi"
+"#;
+        let custom_config: AppConfig = toml::from_str(custom_toml).unwrap();
+        assert_eq!(custom_config.preferred_provider, Provider::Senshi);
     }
 }
