@@ -25,8 +25,9 @@ static RE_FILE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"file:\s*['"]([^'"]+\.m3u8[^'"]*)['"]"#).unwrap());
 static RE_FILE_GENERIC: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(https?://[^\s'"]+\.m3u8[^\s'"]*)"#).unwrap());
-static RE_MAL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"href=["'](?:https?://)?(?:www\.)?myanimelist\.net/anime/([0-9]+)["']"#).unwrap());
+static RE_MAL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"href=["'](?:https?://)?(?:www\.)?myanimelist\.net/anime/([0-9]+)["']"#).unwrap()
+});
 
 fn decode_html_entities(s: &str) -> String {
     s.replace("&quot;", "\"")
@@ -281,7 +282,10 @@ impl AnimeProvider for AnidbClient {
         let target_lang = match translation {
             Translation::Dub => "eng",
             Translation::Raw => {
-                dbg_log!("anidb", "fetch_streams: Translation::Raw requested but provider does not offer raw streams; falling back to Sub");
+                dbg_log!(
+                    "anidb",
+                    "fetch_streams: Translation::Raw requested but provider does not offer raw streams; falling back to Sub"
+                );
                 "jpn"
             }
             _ => "jpn",

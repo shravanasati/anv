@@ -59,5 +59,3 @@ pub async fn aggregate_anime_search(
 
     Ok(combined)
 }
-
-

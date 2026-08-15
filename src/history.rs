@@ -3,10 +3,7 @@ use chrono::{DateTime, Utc};
 use dialoguer::{Select, theme::ColorfulTheme};
 use dirs_next::data_dir;
 use serde::{Deserialize, Serialize};
-use std::{
-    fs,
-    path::PathBuf,
-};
+use std::{fs, path::PathBuf};
 
 use crate::types::{Provider, Translation};
 

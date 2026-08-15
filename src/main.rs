@@ -222,7 +222,10 @@ async fn run_list_command(
         Translation::Sub
     };
     let episode = sub.episode.clone().or_else(|| cli.episode.clone());
-    let provider = sub.provider.or(cli.provider).unwrap_or(cfg.preferred_provider);
+    let provider = sub
+        .provider
+        .or(cli.provider)
+        .unwrap_or(cfg.preferred_provider);
     let download = sub.download.clone().or_else(|| cli.download.clone());
 
     match mal_client.as_ref() {

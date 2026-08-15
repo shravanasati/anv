@@ -168,8 +168,6 @@ pub async fn launch_player(
     Ok(())
 }
 
-
-
 pub fn apply_header_args(cmd: &mut Command, headers: &std::collections::HashMap<String, String>) {
     for (key, value) in headers {
         if key.eq_ignore_ascii_case("user-agent") {
@@ -277,7 +275,9 @@ mod tests {
 
         assert!(args.contains(&"--user-agent=TestUA/1.0".to_string()));
         assert!(args.contains(&"--referrer=https://example.com/ref".to_string()));
-        assert!(args.contains(&"--http-header-fields=Referer: https://example.com/ref".to_string()));
+        assert!(
+            args.contains(&"--http-header-fields=Referer: https://example.com/ref".to_string())
+        );
         assert!(args.contains(&"--http-header-fields=X-Custom-Header: custom_val".to_string()));
     }
 }

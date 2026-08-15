@@ -297,8 +297,8 @@ fn advance_current(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[test]
     fn test_advance_current() {
@@ -369,5 +369,3 @@ mod tests {
         assert_eq!(consumed_count.load(Ordering::SeqCst), 3);
     }
 }
-
-

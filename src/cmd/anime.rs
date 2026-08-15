@@ -430,5 +430,3 @@ async fn resolve_show_info<C: AnimeProvider>(
         bail!("No results found for \"{}\"", title);
     }
 }
-
-

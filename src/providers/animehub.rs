@@ -18,10 +18,8 @@ pub const ANIMEHUB_MAX_SEARCH_PAGES: usize = 2;
 pub const HS_PARAM_PL_USN: &str = "1";
 
 static RE_NUM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(\d+)"#).unwrap());
-static RE_ZRPART2: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"var\s+zrpart2\s*=\s*['"]([^'"]+)['"]"#).unwrap()
-});
-
+static RE_ZRPART2: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"var\s+zrpart2\s*=\s*['"]([^'"]+)['"]"#).unwrap());
 
 #[derive(Debug, Clone)]
 pub struct AnimehubClient {
@@ -54,7 +52,10 @@ impl AnimehubClient {
                 Ok(resp) => {
                     let status = resp.status();
                     if status.is_server_error() {
-                        dbg_log!("animehub", "fetch attempt {attempt} failed with status {status}");
+                        dbg_log!(
+                            "animehub",
+                            "fetch attempt {attempt} failed with status {status}"
+                        );
                         last_err = Some(anyhow!("server error status {status}"));
                         continue;
                     }
@@ -367,7 +368,9 @@ impl AnimeProvider for AnimehubClient {
             Provider::Animehub.display_name(),
         );
         for stream in &mut streams {
-            stream.headers.insert("User-Agent".to_string(), USER_AGENT.to_string());
+            stream
+                .headers
+                .insert("User-Agent".to_string(), USER_AGENT.to_string());
         }
 
         Ok(streams)
@@ -447,13 +450,17 @@ mod tests {
         assert_eq!(url_sub, "https://123animehub.cc/naruto-shippuden");
         assert_eq!(slug_sub, "naruto-shippuden");
 
-        let (url_dub, slug_dub) = resolve_show_url_and_slug("/v/naruto-shippuden", Translation::Dub);
+        let (url_dub, slug_dub) =
+            resolve_show_url_and_slug("/v/naruto-shippuden", Translation::Dub);
         assert_eq!(url_dub, "https://123animehub.cc/v/naruto-shippuden-dub");
         assert_eq!(slug_dub, "naruto-shippuden-dub");
 
         let (url_dub_exists, slug_dub_exists) =
             resolve_show_url_and_slug("naruto-shippuden-dub", Translation::Dub);
-        assert_eq!(url_dub_exists, "https://123animehub.cc/naruto-shippuden-dub");
+        assert_eq!(
+            url_dub_exists,
+            "https://123animehub.cc/naruto-shippuden-dub"
+        );
         assert_eq!(slug_dub_exists, "naruto-shippuden-dub");
     }
 }

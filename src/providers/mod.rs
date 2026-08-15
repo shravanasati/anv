@@ -150,7 +150,6 @@ where
     bail!("HTTP request failed after {attempts} attempts")
 }
 
-
 pub trait AnimeProvider {
     async fn search_shows(&self, query: &str, translation: Translation) -> Result<Vec<ShowInfo>>;
     async fn fetch_episodes(&self, show_id: &str, translation: Translation) -> Result<Vec<String>>;

@@ -673,10 +673,7 @@ impl VibeProxy {
         };
 
         let seg_url = {
-            let guard = session
-                .variants
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let guard = session.variants.lock().unwrap_or_else(|e| e.into_inner());
             guard
                 .get(variant_name)
                 .and_then(|segs| segs.get(idx))

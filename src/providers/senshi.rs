@@ -50,7 +50,10 @@ impl SenshiClient {
             .with_context(|| format!("Senshi request to {url} failed"))?;
         let status = resp.status();
         if !status.is_success() {
-            dbg_log!("senshi", "request to {url} failed with HTTP status {status}");
+            dbg_log!(
+                "senshi",
+                "request to {url} failed with HTTP status {status}"
+            );
             bail!("Senshi request to {url} failed with status {status}");
         }
 
@@ -267,7 +270,11 @@ impl AnimeProvider for SenshiClient {
         let url = format!("{}/episodes/{}", BASE_URL, mal_id);
         let episodes: Vec<EpisodeItem> = self.fetch_json(reqwest::Method::GET, &url, None).await?;
 
-        dbg_log!("senshi", "fetch_episodes mal_id={mal_id} count={}", episodes.len());
+        dbg_log!(
+            "senshi",
+            "fetch_episodes mal_id={mal_id} count={}",
+            episodes.len()
+        );
 
         if episodes.is_empty() {
             bail!("no episodes found for mal id {mal_id}");

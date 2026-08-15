@@ -156,7 +156,8 @@ impl SkipCache {
             entries: HashMap<String, SkipCacheEntry>,
         }
 
-        let raw: RawSkipCache = serde_json::from_str(&content).context("failed to parse aniskip cache")?;
+        let raw: RawSkipCache =
+            serde_json::from_str(&content).context("failed to parse aniskip cache")?;
         let now = current_timestamp();
 
         let mut entries = HashMap::new();
@@ -204,7 +205,11 @@ fn get_aniskip_cache_path() -> Result<PathBuf> {
     Ok(base.join("anv").join("aniskip_cache.json"))
 }
 
-pub async fn fetch_skip_times(mal_id: &str, ep_num: usize, config: &AppConfig) -> Result<SkipTimes> {
+pub async fn fetch_skip_times(
+    mal_id: &str,
+    ep_num: usize,
+    config: &AppConfig,
+) -> Result<SkipTimes> {
     let mut cache = SkipCache::load().unwrap_or_default();
     let cache_key = format!("{}_{}", mal_id, ep_num);
 
@@ -213,7 +218,11 @@ pub async fn fetch_skip_times(mal_id: &str, ep_num: usize, config: &AppConfig) -
         return Ok(cached.skip_times.clone());
     }
 
-    dbg_log!("aniskip", "cache miss for key: {}. Fetching from API...", cache_key);
+    dbg_log!(
+        "aniskip",
+        "cache miss for key: {}. Fetching from API...",
+        cache_key
+    );
 
     let url = format!(
         "{}/{}/{}?types=op&types=ed&types=mixed-op&types=mixed-ed&types=recap&episodeLength=0",
@@ -257,10 +266,15 @@ pub async fn fetch_skip_times(mal_id: &str, ep_num: usize, config: &AppConfig) -
 
     let resp = match resp_opt {
         Some(r) => r,
-        None => return Err(last_err.unwrap_or_else(|| anyhow!("AniSkip request failed after retries"))),
+        None => {
+            return Err(last_err.unwrap_or_else(|| anyhow!("AniSkip request failed after retries")));
+        }
     };
 
-    let aniskip_resp: AniskipResponse = resp.json().await.context("failed to parse AniSkip JSON response")?;
+    let aniskip_resp: AniskipResponse = resp
+        .json()
+        .await
+        .context("failed to parse AniSkip JSON response")?;
 
     let mut skip_times = SkipTimes::default();
     if aniskip_resp.found {
@@ -279,7 +293,13 @@ pub async fn fetch_skip_times(mal_id: &str, ep_num: usize, config: &AppConfig) -
         }
     }
 
-    dbg_log!("aniskip", "result for {}_{}: {:?}", mal_id, ep_num, skip_times);
+    dbg_log!(
+        "aniskip",
+        "result for {}_{}: {:?}",
+        mal_id,
+        ep_num,
+        skip_times
+    );
 
     if !skip_times.is_empty() {
         cache.entries.insert(
@@ -460,7 +480,10 @@ mod tests {
         }
 
         let content = serde_json::to_string(&cache).unwrap();
-        assert!(!content.contains('\n'), "Saved cache must be compact unindented JSON");
+        assert!(
+            !content.contains('\n'),
+            "Saved cache must be compact unindented JSON"
+        );
         assert_eq!(cache.entries.len(), MAX_CACHE_ENTRIES);
 
         let _ = fs::remove_file(path);
