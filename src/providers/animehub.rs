@@ -10,7 +10,7 @@ use serde::Deserialize;
 use url::Url;
 
 use crate::dbg_log;
-use crate::providers::{AUTO_QUALITY_LABEL, AnimeProvider, USER_AGENT};
+use crate::providers::{AnimeProvider, USER_AGENT};
 use crate::types::{EpisodeCounts, Provider, ShowInfo, StreamOption, Translation};
 
 pub const ANIMEHUB_BASE_URL: &str = "https://123animehub.cc";
@@ -21,7 +21,6 @@ static RE_NUM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(\d+)"#).unwrap(
 static RE_ZRPART2: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"var\s+zrpart2\s*=\s*['"]([^'"]+)['"]"#).unwrap()
 });
-static RE_RES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"RESOLUTION=\d+x(\d+)"#).unwrap());
 
 
 #[derive(Debug, Clone)]
@@ -168,16 +167,16 @@ impl AnimeProvider for AnimehubClient {
                     continue;
                 }
 
-                if link.ends_with("-dub") {
-                    link.truncate(link.len() - 4);
+                if let Some(stripped) = link.strip_suffix("-dub") {
+                    link = stripped.to_string();
                 }
 
                 let mut raw_name = name_el.text().collect::<String>().trim().to_string();
-                if raw_name.ends_with(" (Dub)") {
-                    raw_name.truncate(raw_name.len() - 6);
+                if let Some(stripped) = raw_name.strip_suffix(" (Dub)") {
+                    raw_name = stripped.to_string();
                 }
-                if raw_name.ends_with(" Dub") {
-                    raw_name.truncate(raw_name.len() - 4);
+                if let Some(stripped) = raw_name.strip_suffix(" Dub") {
+                    raw_name = stripped.to_string();
                 }
                 let name = raw_name.trim().to_string();
 
@@ -360,63 +359,15 @@ impl AnimeProvider for AnimehubClient {
             .header("Referer", format!("{target_base}/"));
         let m3u8_text = self.fetch_string_with_retry(req).await?;
 
-        let mut headers = HashMap::new();
-        headers.insert("Referer".to_string(), format!("{target_base}/"));
-        headers.insert("User-Agent".to_string(), USER_AGENT.to_string());
-
-        let base_m3u8_url = Url::parse(&sources_url).ok();
-        let mut streams = Vec::new();
-        let lines: Vec<&str> = m3u8_text.lines().collect();
-
-        for i in 0..lines.len() {
-            let line = lines[i].trim();
-            if line.starts_with("#EXT-X-STREAM-INF:") {
-                let height = RE_RES
-                    .captures(line)
-                    .and_then(|c| c[1].parse::<i32>().ok())
-                    .unwrap_or(0);
-
-                if let Some(next_line) = lines.get(i + 1) {
-                    let stream_rel = next_line.trim();
-                    if !stream_rel.is_empty() && !stream_rel.starts_with('#') {
-                        let full_url = match &base_m3u8_url {
-                            Some(b) => b
-                                .join(stream_rel)
-                                .map(|u| u.to_string())
-                                .unwrap_or_else(|_| stream_rel.to_string()),
-                            None => stream_rel.to_string(),
-                        };
-                        let quality_label = if height > 0 {
-                            format!("{height}p")
-                        } else {
-                            AUTO_QUALITY_LABEL.to_string()
-                        };
-                        streams.push(StreamOption {
-                            provider: Provider::Animehub.display_name().to_string(),
-                            url: full_url,
-                            quality_label,
-                            quality_rank: height,
-                            is_hls: true,
-                            headers: headers.clone(),
-                            subtitle: None,
-                        });
-                    }
-                }
-            }
-        }
-
-        if streams.is_empty() {
-            streams.push(StreamOption {
-                provider: Provider::Animehub.display_name().to_string(),
-                url: sources_url,
-                quality_label: "1080p".to_string(),
-                quality_rank: 1080,
-                is_hls: true,
-                headers,
-                subtitle: None,
-            });
-        } else {
-            streams.sort_by(|a, b| b.quality_rank.cmp(&a.quality_rank));
+        let referer = format!("{target_base}/");
+        let mut streams = crate::providers::parse_hls_master(
+            &sources_url,
+            &m3u8_text,
+            &referer,
+            Provider::Animehub.display_name(),
+        );
+        for stream in &mut streams {
+            stream.headers.insert("User-Agent".to_string(), USER_AGENT.to_string());
         }
 
         Ok(streams)

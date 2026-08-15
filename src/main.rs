@@ -14,7 +14,7 @@ mod sync;
 mod types;
 mod utils;
 
-use history::{History, history_path};
+use history::History;
 use sync::mal::build_mal_client_if_enabled;
 use types::{Provider, Translation};
 
@@ -212,8 +212,7 @@ async fn run_list_command(
     cli: &Cli,
     cfg: &AppConfig,
 ) -> Result<()> {
-    let history_path = history_path()?;
-    let mut history = History::load(&history_path)?;
+    let mut history = History::load()?;
     let mal_client = build_mal_client_if_enabled(cfg).await;
     let binge = sub.binge || cli.binge || cfg.binge;
     let auto_play_next = sub.next_episode || cfg.auto_play_next;
@@ -243,7 +242,6 @@ async fn run_list_command(
                 episode,
                 auto_play_next,
                 &mut history,
-                &history_path,
                 client,
                 cfg,
                 cli,
@@ -270,8 +268,7 @@ async fn run() -> Result<()> {
             provider: history_provider,
             download: history_download,
         }) => {
-            let history_path = history_path()?;
-            let mut history = History::load(&history_path)?;
+            let mut history = History::load()?;
             let mal_client = build_mal_client_if_enabled(&cfg).await;
             let binge = *history_binge || cli.binge || cfg.binge;
             let auto_play_next = *history_next || cfg.auto_play_next;
@@ -283,7 +280,6 @@ async fn run() -> Result<()> {
                 Translation::Sub,
                 true,
                 &mut history,
-                &history_path,
                 mal_client.as_ref(),
                 binge,
                 auto_play_next,
@@ -355,8 +351,7 @@ async fn run() -> Result<()> {
         _ => {}
     }
 
-    let history_path = history_path()?;
-    let mut history = History::load(&history_path)?;
+    let mut history = History::load()?;
 
     // Build MAL client if sync is enabled and a token exists
     let mal_client = build_mal_client_if_enabled(&cfg).await;
@@ -375,7 +370,6 @@ async fn run() -> Result<()> {
         translation,
         false,
         &mut history,
-        &history_path,
         mal_client.as_ref(),
         binge,
         auto_play_next,

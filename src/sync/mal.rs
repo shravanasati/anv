@@ -81,15 +81,11 @@ use crate::types::Provider;
 /// Field routing:
 /// - `anidb_entries`   — AniDB slug IDs (e.g. "gate-1759")
 /// - `anineko_entries` — AniNeko show IDs
-/// - `entries`         — legacy field from the AllAnime era; never written
-///   (`skip_serializing`) so it drains away on next save.
-///   Senshi uses MAL IDs directly as show IDs, so it needs no cache bucket.
+/// - `animehub_entries` — AnimeHub show IDs
+///
+/// Senshi uses MAL IDs directly as show IDs, so it needs no cache bucket.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct MalIdCache {
-    /// Legacy AllAnime-era bucket — read-only for migration, never written back.
-    #[serde(default, skip_serializing)]
-    #[allow(dead_code)]
-    entries: HashMap<String, u32>,
     #[serde(default)]
     anidb_entries: HashMap<String, u32>,
     #[serde(default)]
@@ -155,6 +151,13 @@ impl MalIdCache {
         provider: Provider,
     ) -> Result<()> {
         if let Some(bucket) = self.bucket_mut(provider) {
+            if bucket.len() >= 1000 {
+                // Keep the cache capped at 1000 entries by removing arbitrary 200 items when full
+                let keys_to_remove: Vec<String> = bucket.keys().take(200).cloned().collect();
+                for k in keys_to_remove {
+                    bucket.remove(&k);
+                }
+            }
             bucket.insert(show_id.to_string(), mal_id);
         }
         let path = Self::cache_path()?;
@@ -162,7 +165,7 @@ impl MalIdCache {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create data directory {}", parent.display()))?;
         }
-        let data = serde_json::to_string_pretty(self).context("failed to serialize ID cache")?;
+        let data = serde_json::to_string(self).context("failed to serialize ID cache")?;
         fs::write(&path, data)
             .with_context(|| format!("failed to write ID cache to {}", path.display()))?;
         Ok(())
@@ -774,20 +777,20 @@ impl MalClient {
         Ok(entries)
     }
 
+    fn lock_cache(&self) -> std::sync::MutexGuard<'_, MalIdCache> {
+        self.id_cache.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn lock_skipped(&self) -> std::sync::MutexGuard<'_, std::collections::HashSet<String>> {
+        self.skipped_ids.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     pub fn cached_id(&self, mal_id: u32, provider: Provider) -> Option<String> {
-        self.id_cache
-            .lock()
-            .unwrap()
-            .get_cached_id(mal_id, provider)
+        self.lock_cache().get_cached_id(mal_id, provider)
     }
 
     pub fn cache_id(&self, show_id: &str, mal_id: u32, provider: Provider) {
-        if let Err(err) = self
-            .id_cache
-            .lock()
-            .unwrap()
-            .insert_and_save(show_id, mal_id, provider)
-        {
+        if let Err(err) = self.lock_cache().insert_and_save(show_id, mal_id, provider) {
             eprintln!("[watchlist] Warning: could not save ID cache: {err}");
         }
     }
@@ -808,46 +811,30 @@ impl MalClient {
         let mal_id = if let Some(id) = resolved_id {
             // Trust the caller-provided ID and remember it for later lookups so
             // subsequent episodes don't re-resolve (and don't re-prompt).
-            if self
-                .id_cache
-                .lock()
-                .unwrap()
-                .get(show_id, provider)
-                .is_none()
-            {
-                if let Err(err) = self
-                    .id_cache
-                    .lock()
-                    .unwrap()
-                    .insert_and_save(show_id, id, provider)
-                {
+            if self.lock_cache().get(show_id, provider).is_none() {
+                if let Err(err) = self.lock_cache().insert_and_save(show_id, id, provider) {
                     eprintln!("[sync] Warning: could not save ID cache: {err}");
                 }
             }
             id
         } else {
             // Resolve from cache, else search + user confirmation.
-            if self.skipped_ids.lock().unwrap().contains(show_id) {
+            if self.lock_skipped().contains(show_id) {
                 return Ok(()); // user already declined this show this session
             }
-            let cached_id = self.id_cache.lock().unwrap().get(show_id, provider);
+            let cached_id = self.lock_cache().get(show_id, provider);
             if let Some(id) = cached_id {
                 id
             } else {
                 match self.resolve_and_confirm_mal_id(show_title).await {
                     Ok(Some(id)) => {
-                        if let Err(err) = self
-                            .id_cache
-                            .lock()
-                            .unwrap()
-                            .insert_and_save(show_id, id, provider)
-                        {
+                        if let Err(err) = self.lock_cache().insert_and_save(show_id, id, provider) {
                             eprintln!("[sync] Warning: could not save ID cache: {err}");
                         }
                         id
                     }
                     Ok(None) => {
-                        self.skipped_ids.lock().unwrap().insert(show_id.to_string());
+                        self.lock_skipped().insert(show_id.to_string());
                         return Ok(());
                     }
                     Err(err) => {
@@ -1032,5 +1019,20 @@ pub async fn build_mal_client_if_enabled(cfg: &AppConfig) -> Option<MalClient> {
             eprintln!("[sync] Failed to load MAL token: {err}");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mal_id_cache_deserialization_with_legacy_entries_field() {
+        let legacy_json = r#"{
+            "entries": {"old-show": 1234},
+            "anidb_entries": {"gate-1759": 5678}
+        }"#;
+        let cache: MalIdCache = serde_json::from_str(legacy_json).unwrap();
+        assert_eq!(cache.get("gate-1759", Provider::Anidb), Some(5678));
     }
 }

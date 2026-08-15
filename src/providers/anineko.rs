@@ -12,9 +12,7 @@ use tokio::{
 };
 use url::Url;
 
-use crate::providers::{
-    AUTO_QUALITY_LABEL, AUTO_QUALITY_RANK, AnimeProvider, parse_quality_rank,
-};
+use crate::providers::{AUTO_QUALITY_LABEL, AUTO_QUALITY_RANK, AnimeProvider, parse_quality_rank};
 use crate::types::{EpisodeCounts, Provider, ShowInfo, StreamOption, Translation};
 
 const BASE_URL: &str = "https://anineko.to";
@@ -22,19 +20,23 @@ const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 const PNG_IEND_MARKER: &[u8] = &[0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82];
 
 static RE_EP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"/ep-(\d+)"#).unwrap());
-static RE_WATCH_SLUG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"/watch/([^/?#]+)"#).unwrap());
-static RE_MARKER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"data-id="(hsub|sub|dub)""#).unwrap());
+static RE_WATCH_SLUG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"/watch/([^/?#]+)"#).unwrap());
+static RE_MARKER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"data-id="(hsub|sub|dub)""#).unwrap());
 static RE_VIDEO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"data-video="([^"]+)""#).unwrap());
-static RE_SUB: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"const subtitle = "([^"]+)""#).unwrap());
-static RE_TRACK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"file:\s*"([^"]+\.(?:vtt|ass|srt))""#).unwrap());
-static RE_MASTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"const src = "(https?://[^"]+/master\.m3u8)""#).unwrap());
+static RE_SUB: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"const subtitle = "([^"]+)""#).unwrap());
+static RE_TRACK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"file:\s*"([^"]+\.(?:vtt|ass|srt))""#).unwrap());
+static RE_MASTER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"const src = "(https?://[^"]+/master\.m3u8)""#).unwrap());
 static RE_VARIANT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?m)^#EXT-X-STREAM-INF:.*NAME="([^"]+)".*\r?\n([^\r\n#]+)"#).unwrap()
 });
 static RE_PUBLIC_MASTER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"const src = "(https?://[^"]+/public/stream/[^"]+/master\.m3u8)""#).unwrap()
 });
-
 
 #[derive(Debug, Clone)]
 pub struct AninekoClient {
@@ -186,12 +188,20 @@ impl AnimeProvider for AninekoClient {
 
         let embed_urls = match translation {
             Translation::Dub => groups.get("dub").cloned().unwrap_or_default(),
-            _ => {
+            Translation::Raw => {
                 let soft = groups.get("sub").cloned().unwrap_or_default();
                 if !soft.is_empty() {
                     soft
                 } else {
                     groups.get("hsub").cloned().unwrap_or_default()
+                }
+            }
+            Translation::Sub => {
+                let hard = groups.get("hsub").cloned().unwrap_or_default();
+                if !hard.is_empty() {
+                    hard
+                } else {
+                    groups.get("sub").cloned().unwrap_or_default()
                 }
             }
         };
@@ -208,15 +218,25 @@ impl AnimeProvider for AninekoClient {
             let host_type = resolve_embed_host(&embed_url);
             match host_type.as_str() {
                 "bibiemb" => {
-                    if let Ok(streams) = resolve_bibiemb(&self.client, &embed_url).await {
+                    if let Ok(mut streams) = resolve_bibiemb(&self.client, &embed_url).await {
                         if !streams.is_empty() {
+                            if translation == Translation::Raw {
+                                for s in &mut streams {
+                                    s.subtitle = None;
+                                }
+                            }
                             return Ok(streams);
                         }
                     }
                 }
                 "vibeplayer" => {
-                    if let Ok(streams) = resolve_vibeplayer(&self.client, &embed_url).await {
+                    if let Ok(mut streams) = resolve_vibeplayer(&self.client, &embed_url).await {
                         if !streams.is_empty() {
+                            if translation == Translation::Raw {
+                                for s in &mut streams {
+                                    s.subtitle = None;
+                                }
+                            }
                             return Ok(streams);
                         }
                     }
@@ -230,7 +250,9 @@ impl AnimeProvider for AninekoClient {
 }
 
 pub fn slug_from_watch_url(watch_path: &str) -> Option<String> {
-    RE_WATCH_SLUG.captures(watch_path).map(|c| c[1].trim().to_string())
+    RE_WATCH_SLUG
+        .captures(watch_path)
+        .map(|c| c[1].trim().to_string())
 }
 
 pub fn extract_lang_embed_urls(html: &str) -> HashMap<String, Vec<String>> {
@@ -293,10 +315,8 @@ pub fn subtitle_from_embed_url(embed_url: &str) -> Option<String> {
     let parsed = Url::parse(embed_url).ok()?;
     for (key, val) in parsed.query_pairs() {
         let k = key.to_lowercase();
-        if k == "sub" || k == "caption_1" || k == "c1_file" {
-            if !val.trim().is_empty() {
-                return Some(val.trim().to_string());
-            }
+        if (k == "sub" || k == "caption_1" || k == "c1_file") && !val.trim().is_empty() {
+            return Some(val.trim().to_string());
         }
     }
     None
@@ -391,7 +411,7 @@ async fn resolve_bibiemb(client: &Client, embed_url: &str) -> Result<Vec<StreamO
         });
     }
 
-    streams.sort_by(|a, b| b.quality_rank.cmp(&a.quality_rank));
+    streams.sort_by_key(|b| std::cmp::Reverse(b.quality_rank));
     Ok(streams)
 }
 
@@ -436,6 +456,7 @@ async fn resolve_vibeplayer(client: &Client, embed_url: &str) -> Result<Vec<Stre
 struct VibeSession {
     master_url: String,
     referer: String,
+    created_at: std::time::Instant,
     variants: Mutex<HashMap<String, Vec<String>>>,
 }
 
@@ -489,12 +510,15 @@ impl VibeProxy {
         let session = Arc::new(VibeSession {
             master_url,
             referer,
+            created_at: std::time::Instant::now(),
             variants: Mutex::new(HashMap::new()),
         });
-        self.sessions
-            .lock()
-            .unwrap()
-            .insert(session_id.clone(), session);
+        let ttl = std::time::Duration::from_secs(7200); // 2 hours
+        {
+            let mut lock = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+            lock.retain(|_, s| s.created_at.elapsed() < ttl);
+            lock.insert(session_id.clone(), session);
+        }
         format!("{}/stream/{}/master.m3u8", self.base_url, session_id)
     }
 
@@ -519,7 +543,7 @@ impl VibeProxy {
 
         let session_id = path_parts[0];
         let session = {
-            let guard = self.sessions.lock().unwrap();
+            let guard = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
             guard.get(session_id).cloned()
         };
         let Some(session) = session else {
@@ -625,7 +649,7 @@ impl VibeProxy {
         session
             .variants
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .insert(variant_name.to_string(), segments);
         write_http_response(
             stream,
@@ -649,7 +673,10 @@ impl VibeProxy {
         };
 
         let seg_url = {
-            let guard = session.variants.lock().unwrap();
+            let guard = session
+                .variants
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             guard
                 .get(variant_name)
                 .and_then(|segs| segs.get(idx))
@@ -695,8 +722,12 @@ async fn write_http_response(
     content_type: &str,
     body: &[u8],
 ) -> Result<()> {
+    let reason = reqwest::StatusCode::from_u16(status)
+        .ok()
+        .and_then(|s| s.canonical_reason())
+        .unwrap_or("Unknown");
     let response_headers = format!(
-        "HTTP/1.1 {status} OK\r\nContent-Length: {}\r\nContent-Type: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nContent-Type: {}\r\nConnection: close\r\n\r\n",
         body.len(),
         content_type
     );

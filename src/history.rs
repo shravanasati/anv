@@ -5,7 +5,7 @@ use dirs_next::data_dir;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use crate::types::{Provider, Translation};
@@ -27,25 +27,27 @@ pub struct History {
 }
 
 impl History {
-    pub fn load(path: &Path) -> Result<Self> {
+    pub fn load() -> Result<Self> {
+        let path = history_path()?;
         if !path.exists() {
             return Ok(Self::default());
         }
-        let data = fs::read_to_string(path)
+        let data = fs::read_to_string(&path)
             .with_context(|| format!("failed to read history file {}", path.display()))?;
         let history = serde_json::from_str(&data)
             .with_context(|| format!("failed to parse history file {}", path.display()))?;
         Ok(history)
     }
 
-    pub fn save(&self, path: &Path) -> Result<()> {
+    pub fn save(&self) -> Result<()> {
+        let path = history_path()?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).with_context(|| {
                 format!("failed to create history directory {}", parent.display())
             })?;
         }
         let data = serde_json::to_string_pretty(self)?;
-        fs::write(path, data)
+        fs::write(&path, data)
             .with_context(|| format!("failed to write history file {}", path.display()))?;
         Ok(())
     }

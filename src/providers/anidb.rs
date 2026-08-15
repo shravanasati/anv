@@ -1,40 +1,32 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
+use regex::Regex;
 use reqwest::Client;
 use serde::Deserialize;
-use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::time::Duration;
-use regex::Regex;
-use url::Url;
 
 use crate::dbg_log;
-use crate::providers::{AUTO_QUALITY_LABEL, AUTO_QUALITY_RANK, AnimeProvider, USER_AGENT};
+use crate::providers::{AnimeProvider, USER_AGENT};
 use crate::types::{EpisodeCounts, Provider, ShowInfo, StreamOption, Translation};
 
 pub const ANIDB_BASE_URL: &str = "https://anidb.app";
 
 static RE_SUGGESTIONS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"href="https://anidb\.app/anime/([a-z0-9-]+-[0-9]+)"[\s\S]*?alt="([^"]+)""#).unwrap()
+    Regex::new(r#"href="https://anidb\.app/anime/([a-z0-9-]+-[0-9]+)"[\s\S]*?alt="([^"]+)""#)
+        .unwrap()
 });
 static RE_BROWSE_TITLE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"href="https://anidb\.app/anime/([a-z0-9-]+-[0-9]+)"[^>]*title="([^"]+)""#).unwrap()
+    Regex::new(r#"href="https://anidb\.app/anime/([a-z0-9-]+-[0-9]+)"[^>]*title="([^"]+)""#)
+        .unwrap()
 });
-static RE_BROWSE_ALT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"href="/anime/([a-z0-9-]+-[0-9]+)"[^>]*alt="([^"]+)""#).unwrap()
-});
-static RE_FILE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"file:\s*['"]([^'"]+\.m3u8[^'"]*)['"]"#).unwrap()
-});
-static RE_FILE_GENERIC: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(https?://[^\s'"]+\.m3u8[^\s'"]*)"#).unwrap()
-});
-static RE_RES: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"RESOLUTION=\d+x(\d+)"#).unwrap()
-});
-static RE_MAL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"myanimelist\.net/anime/([0-9]+)"#).unwrap()
-});
-
+static RE_BROWSE_ALT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"href="/anime/([a-z0-9-]+-[0-9]+)"[^>]*alt="([^"]+)""#).unwrap());
+static RE_FILE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"file:\s*['"]([^'"]+\.m3u8[^'"]*)['"]"#).unwrap());
+static RE_FILE_GENERIC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(https?://[^\s'"]+\.m3u8[^\s'"]*)"#).unwrap());
+static RE_MAL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"href=["'](?:https?://)?(?:www\.)?myanimelist\.net/anime/([0-9]+)["']"#).unwrap());
 
 fn decode_html_entities(s: &str) -> String {
     s.replace("&quot;", "\"")
@@ -272,7 +264,11 @@ impl AnimeProvider for AnidbClient {
             .json()
             .await?;
         let langs = lang_resp.languages;
-        dbg_log!("anidb", "fetch_streams: {} language items available", langs.len());
+        dbg_log!(
+            "anidb",
+            "fetch_streams: {} language items available",
+            langs.len()
+        );
         dbg_log!(
             "anidb",
             "fetch_streams: language codes = {:?}",
@@ -284,6 +280,10 @@ impl AnimeProvider for AnidbClient {
 
         let target_lang = match translation {
             Translation::Dub => "eng",
+            Translation::Raw => {
+                dbg_log!("anidb", "fetch_streams: Translation::Raw requested but provider does not offer raw streams; falling back to Sub");
+                "jpn"
+            }
             _ => "jpn",
         };
         dbg_log!("anidb", "fetch_streams: target lang={target_lang}");
@@ -304,7 +304,11 @@ impl AnimeProvider for AnidbClient {
             .error_for_status()?
             .text()
             .await?;
-        dbg_log!("anidb", "fetch_streams: embed page ({} bytes)", embed_page.len());
+        dbg_log!(
+            "anidb",
+            "fetch_streams: embed page ({} bytes)",
+            embed_page.len()
+        );
 
         let master_m3u8 = RE_FILE
             .captures(&embed_page)
@@ -330,75 +334,27 @@ impl AnimeProvider for AnidbClient {
             .send()
             .await
             .map_err(|e| anyhow!("failed to fetch master m3u8: {e}"))?
+            .error_for_status()?
             .text()
             .await
-            .unwrap_or_default();
-        dbg_log!("anidb", "fetch_streams: m3u8 content ({} bytes)", m3u8_content.len());
+            .context("failed to read master m3u8 body")?;
+        dbg_log!(
+            "anidb",
+            "fetch_streams: m3u8 content ({} bytes)",
+            m3u8_content.len()
+        );
 
-        let base_url = Url::parse(&master_m3u8).ok();
-        let mut streams = Vec::new();
-        let lines: Vec<&str> = m3u8_content.lines().collect();
-
-        for i in 0..lines.len() {
-            let line = lines[i].trim();
-            if line.starts_with("#EXT-X-STREAM-INF:") {
-                let height = RE_RES
-                    .captures(line)
-                    .and_then(|c| c[1].parse::<i32>().ok())
-                    .unwrap_or(0);
-
-                if let Some(next_line) = lines.get(i + 1) {
-                    let stream_rel = next_line.trim();
-                    if !stream_rel.is_empty() && !stream_rel.starts_with('#') {
-                        let full_url = match &base_url {
-                            Some(b) => b
-                                .join(stream_rel)
-                                .map(|u| u.to_string())
-                                .unwrap_or_else(|_| stream_rel.to_string()),
-                            None => stream_rel.to_string(),
-                        };
-
-                        let quality_label = if height > 0 {
-                            format!("{height}p")
-                        } else {
-                            AUTO_QUALITY_LABEL.to_string()
-                        };
-
-                        let mut headers = HashMap::new();
-                        headers.insert("Referer".to_string(), ANIDB_BASE_URL.to_string());
-
-                        streams.push(StreamOption {
-                            provider: Provider::Anidb.display_name().to_string(),
-                            url: full_url,
-                            quality_label,
-                            quality_rank: height,
-                            is_hls: true,
-                            headers,
-                            subtitle: None,
-                        });
-                    }
-                }
-            }
-        }
-
-        if streams.is_empty() {
-            dbg_log!("anidb", "fetch_streams: no quality variants parsed, using master m3u8 directly");
-            let mut headers = HashMap::new();
-            headers.insert("Referer".to_string(), ANIDB_BASE_URL.to_string());
-
-            streams.push(StreamOption {
-                provider: Provider::Anidb.display_name().to_string(),
-                url: master_m3u8,
-                quality_label: AUTO_QUALITY_LABEL.to_string(),
-                quality_rank: AUTO_QUALITY_RANK,
-                is_hls: true,
-                headers,
-                subtitle: None,
-            });
-        } else {
-            streams.sort_by(|a, b| b.quality_rank.cmp(&a.quality_rank));
-        }
-        dbg_log!("anidb", "fetch_streams: returning {} stream options", streams.len());
+        let streams = crate::providers::parse_hls_master(
+            &master_m3u8,
+            &m3u8_content,
+            ANIDB_BASE_URL,
+            Provider::Anidb.display_name(),
+        );
+        dbg_log!(
+            "anidb",
+            "fetch_streams: returning {} stream options",
+            streams.len()
+        );
 
         Ok(streams)
     }

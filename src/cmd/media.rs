@@ -1,5 +1,4 @@
 use std::future::Future;
-use std::path::Path;
 
 use anyhow::Result;
 use chrono::Utc;
@@ -67,7 +66,6 @@ pub async fn run_media_loop<F, Fut>(
     auto_play_next: bool,
     binge: bool,
     history: &mut History,
-    history_path: &Path,
     translation: Translation,
     provider: Provider,
     cfg: MediaLoopConfig<'_>,
@@ -185,7 +183,7 @@ where
             provider,
             watched_at: Utc::now(),
         });
-        history.save(history_path)?;
+        history.save()?;
 
         match advance_current(
             auto_advance || binge,
@@ -320,7 +318,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_binge_mode_auto_plays_all_episodes() {
-        let history_path = std::env::temp_dir().join("anv_test_binge_history.json");
         let mut history = History::default();
 
         let items = vec![
@@ -349,7 +346,6 @@ mod tests {
             true, // auto_play_next: starts at ep 1 with skip_selection = true
             true, // binge: should auto play all 3 episodes
             &mut history,
-            &history_path,
             Translation::Sub,
             Provider::Senshi,
             MediaLoopConfig {
@@ -368,8 +364,6 @@ mod tests {
             },
         )
         .await;
-
-        let _ = std::fs::remove_file(history_path);
 
         assert!(res.is_ok());
         assert_eq!(consumed_count.load(Ordering::SeqCst), 3);

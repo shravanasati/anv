@@ -81,10 +81,8 @@ impl StreamOption {
 pub enum Provider {
     #[default]
     All,
-    #[serde(alias = "allanime")]
     Anidb,
     Anineko,
-    #[serde(alias = "123animehub")]
     Animehub,
     Senshi,
     #[value(skip)]
@@ -132,9 +130,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_allanime_deserialization_alias() {
+    fn test_legacy_provider_deserialization_fallback() {
         let p: Provider = serde_json::from_str("\"allanime\"").unwrap();
-        assert_eq!(p, Provider::Anidb);
+        assert_eq!(p, Provider::Unknown);
     }
 
     #[test]

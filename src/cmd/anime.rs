@@ -1,7 +1,6 @@
 use anyhow::{Result, bail};
 use dialoguer::Select;
 use reqwest::StatusCode;
-use std::path::Path;
 
 use crate::Cli;
 use crate::aniskip::SkipOptions;
@@ -23,7 +22,6 @@ pub async fn run_anime_flow<P: SyncProvider>(
     translation: Translation,
     history_mode: bool,
     history: &mut History,
-    history_path: &Path,
     sync_provider: Option<&P>,
     binge: bool,
     auto_play_next: bool,
@@ -50,7 +48,6 @@ pub async fn run_anime_flow<P: SyncProvider>(
             play_show(
                 &client,
                 history,
-                history_path,
                 entry.translation,
                 target_provider,
                 show_info,
@@ -114,7 +111,6 @@ pub async fn run_anime_flow<P: SyncProvider>(
             play_show(
                 &client,
                 history,
-                history_path,
                 translation,
                 selected_provider,
                 show,
@@ -153,7 +149,6 @@ pub async fn run_anime_flow<P: SyncProvider>(
             play_show(
                 &client,
                 history,
-                history_path,
                 translation,
                 provider,
                 show,
@@ -227,7 +222,6 @@ pub(crate) fn select_show_with_provider(
 pub async fn play_show<P: SyncProvider>(
     client: &impl AnimeProvider,
     history: &mut History,
-    history_path: &Path,
     translation: Translation,
     provider: Provider,
     mut show: ShowInfo,
@@ -283,8 +277,10 @@ pub async fn play_show<P: SyncProvider>(
     }
 
     if show.mal_id.is_none() {
-        if let Ok(Some(mid)) = client.fetch_mal_id(&show.id).await {
-            show.mal_id = Some(mid);
+        match client.fetch_mal_id(&show.id).await {
+            Ok(Some(mid)) => show.mal_id = Some(mid),
+            Ok(None) => {}
+            Err(err) => crate::dbg_log!("anime", "fetch_mal_id error for {}: {err}", show.id),
         }
     }
 
@@ -406,7 +402,6 @@ pub async fn play_show<P: SyncProvider>(
         auto_play_next,
         binge,
         history,
-        history_path,
         translation,
         provider,
         MediaLoopConfig {

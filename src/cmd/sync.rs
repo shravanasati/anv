@@ -1,5 +1,4 @@
 use anyhow::{Context, Result, bail};
-use std::path::Path;
 use std::time::Duration;
 
 use crate::Cli;
@@ -20,7 +19,6 @@ pub async fn run_mal_list(
     episode: Option<String>,
     auto_play_next: bool,
     history: &mut History,
-    history_path: &Path,
     mal_client: &MalClient,
     config: &AppConfig,
     cli: &Cli,
@@ -116,7 +114,6 @@ pub async fn run_mal_list(
             entry,
             mal_client,
             history,
-            history_path,
             translation,
             episode.clone(),
             auto_play_next,
@@ -283,7 +280,6 @@ async fn play_with(
     entry: &MalWatchlistEntry,
     mal_client: &MalClient,
     history: &mut History,
-    history_path: &Path,
     translation: Translation,
     episode: Option<String>,
     auto_play_next: bool,
@@ -298,7 +294,6 @@ async fn play_with(
     play_show(
         client,
         history,
-        history_path,
         translation,
         provider,
         show,
