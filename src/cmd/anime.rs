@@ -16,6 +16,7 @@ use crate::sync::SyncProvider;
 use crate::types::{EpisodeCounts, Provider, ShowInfo, Translation};
 use crate::utils::{search_single_with_timeout, sorted_episode_labels};
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_anime_flow<P: SyncProvider>(
     cli: &Cli,
     config: &AppConfig,
@@ -219,6 +220,7 @@ pub(crate) fn select_show_with_provider(
     Ok(selection.map(|idx| items[idx].clone()))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn play_show<P: SyncProvider>(
     client: &impl AnimeProvider,
     history: &mut History,

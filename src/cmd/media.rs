@@ -58,6 +58,7 @@ pub struct MediaLoopConfig<'a> {
 /// launches the media for the selected entry. The closure must clone anything it
 /// needs from `entry`/`ctx` into owned values *before* an inner `async move`
 /// block so the returned future does not borrow its arguments.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_media_loop<F, Fut>(
     title: &str,
     items: Vec<MediaEntry>,

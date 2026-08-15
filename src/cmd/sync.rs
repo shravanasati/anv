@@ -11,6 +11,7 @@ use crate::providers::{AnimeProvider, AnyAnimeClient};
 use crate::sync::mal::{MalClient, MalToken, MalWatchlistEntry};
 use crate::types::{EpisodeCounts, Provider, ShowInfo, Translation};
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_mal_list(
     list_type: &str,
     list_name: &str,
@@ -273,6 +274,7 @@ async fn resolve_via_single(
 }
 
 /// Set the entry's MAL ID on the show, remember the mapping, and start playback.
+#[allow(clippy::too_many_arguments)]
 async fn play_with(
     client: &AnyAnimeClient,
     provider: Provider,
