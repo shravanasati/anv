@@ -143,6 +143,7 @@ binge = false
 auto_play_next = false
 
 # preferred_provider — content provider to use by default when -p / --provider flag is omitted (default: "all")
+# possible values: all, anidb, anineko, animehub, senshi
 preferred_provider = "all"
 
 [mal]

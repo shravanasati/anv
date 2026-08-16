@@ -142,6 +142,7 @@ const CONFIG_HEADER: &str = "# anv configuration
 #
 # preferred_provider    -- content provider to use by default when -p / --provider flag
 #                         is omitted (default: \"all\")
+#                         possible values: all, anidb, anineko, animehub, senshi
 #
 # [mal]
 #   client_id -- your MAL API client ID
