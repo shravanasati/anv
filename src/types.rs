@@ -11,14 +11,6 @@ pub enum Translation {
 }
 
 impl Translation {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Translation::Sub => "sub",
-            Translation::Dub => "dub",
-            Translation::Raw => "raw",
-        }
-    }
-
     pub fn label(self) -> &'static str {
         match self {
             Translation::Sub => "Sub",
@@ -81,10 +73,8 @@ impl StreamOption {
 pub enum Provider {
     #[default]
     All,
-    Anidb,
     Anineko,
     Animehub,
-    Senshi,
     #[value(skip)]
     #[serde(other)]
     Unknown,
@@ -95,20 +85,16 @@ impl Provider {
         matches!(
             self,
             Provider::All
-                | Provider::Anidb
                 | Provider::Anineko
                 | Provider::Animehub
-                | Provider::Senshi
         )
     }
 
     pub fn display_name(self) -> &'static str {
         match self {
             Provider::All => "All Providers",
-            Provider::Anidb => "AniDB",
             Provider::Anineko => "AniNeko",
             Provider::Animehub => "AnimeHub",
-            Provider::Senshi => "Senshi",
             Provider::Unknown => "Unknown",
         }
     }
@@ -116,10 +102,8 @@ impl Provider {
     pub fn cli_name(self) -> &'static str {
         match self {
             Provider::All => "all",
-            Provider::Anidb => "anidb",
             Provider::Anineko => "anineko",
             Provider::Animehub => "animehub",
-            Provider::Senshi => "senshi",
             Provider::Unknown => "unknown",
         }
     }
@@ -132,6 +116,10 @@ mod tests {
     #[test]
     fn test_legacy_provider_deserialization_fallback() {
         let p: Provider = serde_json::from_str("\"allanime\"").unwrap();
+        assert_eq!(p, Provider::Unknown);
+        let p: Provider = serde_json::from_str("\"anidb\"").unwrap();
+        assert_eq!(p, Provider::Unknown);
+        let p: Provider = serde_json::from_str("\"senshi\"").unwrap();
         assert_eq!(p, Provider::Unknown);
     }
 

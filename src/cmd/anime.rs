@@ -35,6 +35,13 @@ pub async fn run_anime_flow<P: SyncProvider>(
         if let Some(entry) = history.select_entry()? {
             let target_provider = override_provider.unwrap_or(entry.provider);
 
+            if !target_provider.is_anime() {
+                bail!(
+                    "The provider for this history entry ('{}') is no longer available. Please specify an active provider with -p/--provider (e.g. -p anineko).",
+                    entry.provider.display_name()
+                );
+            }
+
             let client = target_provider.anime_client()?;
             let show_info = if target_provider == entry.provider {
                 ShowInfo {

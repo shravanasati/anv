@@ -79,15 +79,10 @@ use crate::types::Provider;
 /// The confirmation dialog is shown only for IDs not yet in this cache.
 ///
 /// Field routing:
-/// - `anidb_entries`   — AniDB slug IDs (e.g. "gate-1759")
 /// - `anineko_entries` — AniNeko show IDs
 /// - `animehub_entries` — AnimeHub show IDs
-///
-/// Senshi uses MAL IDs directly as show IDs, so it needs no cache bucket.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct MalIdCache {
-    #[serde(default)]
-    anidb_entries: HashMap<String, u32>,
     #[serde(default)]
     anineko_entries: HashMap<String, u32>,
     #[serde(default)]
@@ -111,11 +106,9 @@ impl MalIdCache {
             .with_context(|| format!("failed to parse ID cache {}", path.display()))
     }
 
-    /// Per-provider cache bucket. Senshi uses MAL IDs as show IDs natively, so
-    /// it has no bucket and `None` is returned (enforced here, not by callers).
+    /// Per-provider cache bucket.
     fn bucket(&self, provider: Provider) -> Option<&HashMap<String, u32>> {
         match provider {
-            Provider::Anidb => Some(&self.anidb_entries),
             Provider::Anineko => Some(&self.anineko_entries),
             Provider::Animehub => Some(&self.animehub_entries),
             _ => None,
@@ -124,7 +117,6 @@ impl MalIdCache {
 
     fn bucket_mut(&mut self, provider: Provider) -> Option<&mut HashMap<String, u32>> {
         match provider {
-            Provider::Anidb => Some(&mut self.anidb_entries),
             Provider::Anineko => Some(&mut self.anineko_entries),
             Provider::Animehub => Some(&mut self.animehub_entries),
             _ => None,
@@ -259,7 +251,7 @@ pub struct MalClient {
     client_id: String,
     http: Client,
     pub token: MalToken,
-    /// Persistent cache mapping AniDB show IDs → MAL anime IDs.
+    /// Persistent cache mapping provider show IDs → MAL anime IDs.
     /// Loaded once when the client is constructed; saved on every new mapping.
     id_cache: std::sync::Mutex<MalIdCache>,
     /// Show IDs the user has declined to sync during this session.
@@ -1027,12 +1019,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_mal_id_cache_deserialization_with_legacy_entries_field() {
+    fn test_mal_id_cache_deserialization_with_legacy_and_unknown_fields() {
         let legacy_json = r#"{
             "entries": {"old-show": 1234},
-            "anidb_entries": {"gate-1759": 5678}
+            "anidb_entries": {"gate-1759": 5678},
+            "anineko_entries": {"123": 456},
+            "animehub_entries": {"abc": 789}
         }"#;
         let cache: MalIdCache = serde_json::from_str(legacy_json).unwrap();
-        assert_eq!(cache.get("gate-1759", Provider::Anidb), Some(5678));
+        assert_eq!(cache.get("123", Provider::Anineko), Some(456));
+        assert_eq!(cache.get("abc", Provider::Animehub), Some(789));
+        assert_eq!(cache.get("gate-1759", Provider::Unknown), None);
     }
 }

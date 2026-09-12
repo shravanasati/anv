@@ -1,10 +1,8 @@
 use crate::types::{Provider, ShowInfo, StreamOption, Translation};
 use anyhow::{Result, bail};
 
-pub mod anidb;
 pub mod animehub;
 pub mod anineko;
-pub mod senshi;
 
 pub const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36";
 
@@ -167,20 +165,16 @@ pub trait AnimeProvider {
 macro_rules! delegate_anime {
     ($self:expr, $fn:ident ($($arg:expr),* $(,)?)) => {
         match $self {
-            Self::Anidb(c) => c.$fn($($arg),*).await,
             Self::Animehub(c) => c.$fn($($arg),*).await,
             Self::Anineko(c) => c.$fn($($arg),*).await,
-            Self::Senshi(c) => c.$fn($($arg),*).await,
         }
     };
 }
 
 #[derive(Debug, Clone)]
 pub enum AnyAnimeClient {
-    Anidb(anidb::AnidbClient),
     Animehub(animehub::AnimehubClient),
     Anineko(anineko::AninekoClient),
-    Senshi(senshi::SenshiClient),
 }
 
 impl AnimeProvider for AnyAnimeClient {
@@ -209,10 +203,8 @@ impl AnimeProvider for AnyAnimeClient {
 impl Provider {
     pub fn anime_client(&self) -> Result<AnyAnimeClient> {
         match self {
-            Provider::Anidb => Ok(AnyAnimeClient::Anidb(anidb::AnidbClient::new()?)),
             Provider::Animehub => Ok(AnyAnimeClient::Animehub(animehub::AnimehubClient::new()?)),
             Provider::Anineko => Ok(AnyAnimeClient::Anineko(anineko::AninekoClient::new()?)),
-            Provider::Senshi => Ok(AnyAnimeClient::Senshi(senshi::SenshiClient::new()?)),
             _ => bail!(
                 "Provider '{}' does not support anime streaming.",
                 self.display_name()
@@ -222,10 +214,8 @@ impl Provider {
 
     pub fn all_anime() -> &'static [Provider] {
         &[
-            Provider::Anidb,
             Provider::Animehub,
             Provider::Anineko,
-            Provider::Senshi,
         ]
     }
 

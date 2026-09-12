@@ -54,9 +54,9 @@ Search and stream:
 anv "bocchi the rock"
 ```
 
-Specify a provider (e.g. `anidb`, `anineko`, `senshi`, `animehub`):
+Specify a provider (e.g. `anineko`, `animehub`):
 ```bash
-anv -p anidb "bocchi the rock"
+anv -p hianime "bocchi the rock"
 ```
 
 Prefer the dub:
@@ -143,7 +143,7 @@ binge = false
 auto_play_next = false
 
 # preferred_provider — content provider to use by default when -p / --provider flag is omitted (default: "all")
-# possible values: all, anidb, anineko, animehub, senshi
+# possible values: all, anineko, animehub
 preferred_provider = "all"
 
 [mal]
@@ -260,7 +260,7 @@ After each episode finishes playing:
 ## Tips and tweaks
 - Keep `mpv` upgraded – some providers only serve DASH/HLS variants that older builds struggle with.
 - If you want to experiment with custom players, set `player` in `~/.config/anv/config.toml` or use the `ANV_PLAYER` environment variable (env overrides config).
-- Use `-p <PROVIDER>` or `--provider <PROVIDER>` to specify a content provider (`anidb`, `anineko`, `senshi`, `animehub`).
+- Use `-p <PROVIDER>` or `--provider <PROVIDER>` to specify a content provider (`anineko`, `animehub`).
 - Use `-e <EP>` to skip the interactive episode selector and start playing a specific episode immediately.
 - Use `-n` or `--next-episode` to automatically resume from the next episode based on your history or MAL status.
 - Set `auto_play_next = true` in your config to make `-n` the default behavior.

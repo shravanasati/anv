@@ -28,7 +28,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub prefer_english_titles: bool,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_preferred_provider")]
     pub preferred_provider: Provider,
 
     #[serde(default)]
@@ -121,6 +121,21 @@ fn default_false() -> bool {
     false
 }
 
+fn deserialize_preferred_provider<'de, D>(deserializer: D) -> std::result::Result<Provider, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let p = Provider::deserialize(deserializer)?;
+    if p.is_anime() {
+        Ok(p)
+    } else {
+        eprintln!(
+            "Warning: preferred_provider in config is not a valid anime provider. Falling back to 'all'."
+        );
+        Ok(Provider::All)
+    }
+}
+
 const CONFIG_HEADER: &str = "# anv configuration
 # Docs: https://github.com/shravanasati/anv
 #
@@ -142,7 +157,7 @@ const CONFIG_HEADER: &str = "# anv configuration
 #
 # preferred_provider    -- content provider to use by default when -p / --provider flag
 #                         is omitted (default: \"all\")
-#                         possible values: all, anidb, anineko, animehub, senshi
+#                         possible values: all, anineko, animehub
 #
 # [mal]
 #   client_id -- your MAL API client ID
@@ -381,9 +396,21 @@ timeout = 5
         assert_eq!(default_config.preferred_provider, Provider::All);
 
         let custom_toml = r#"
-preferred_provider = "senshi"
+preferred_provider = "animehub"
 "#;
         let custom_config: AppConfig = toml::from_str(custom_toml).unwrap();
-        assert_eq!(custom_config.preferred_provider, Provider::Senshi);
+        assert_eq!(custom_config.preferred_provider, Provider::Animehub);
+
+        let legacy_toml = r#"
+preferred_provider = "anidb"
+"#;
+        let legacy_config: AppConfig = toml::from_str(legacy_toml).unwrap();
+        assert_eq!(legacy_config.preferred_provider, Provider::All);
+
+        let senshi_toml = r#"
+preferred_provider = "senshi"
+"#;
+        let senshi_config: AppConfig = toml::from_str(senshi_toml).unwrap();
+        assert_eq!(senshi_config.preferred_provider, Provider::All);
     }
 }

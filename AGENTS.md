@@ -3,7 +3,7 @@
 This file documents the conventions and requirements that **must** be followed
 when adding a new provider to the `anv` codebase.
 It is derived from a full analysis of every existing anime provider
-(`anidb`, `animehub`, `anineko`, `senshi`) and all the
+(`animehub`, `anineko`) and all the
 systems that interact with them (history, MAL sync, CLI routing, config,
 downloader, etc.).
 
@@ -28,7 +28,7 @@ search mode, download support, or the `watchlist`/`watching` commands.
   - A `timeout` (15 s is standard).
 - [ ] Implement `Default for <Name>Client` that delegates to `new().expect(…)`.
 - [ ] Add `dbg_log!` macro calls (from `crate::logger`) to every major async
-      step, prefixed with the provider module name, e.g. `dbg_log!("anidb", ...)`
+      step, prefixed with the provider module name, e.g. `dbg_log!("anineko", ...)`
       / `dbg_log!("animehub", ...)`.
 - [ ] Implement `AnimeProvider for <Name>Client`:
   - [ ] `search_shows` — return `Vec<ShowInfo>` with correct `id`, `title`,
@@ -50,8 +50,6 @@ search mode, download support, or the `watchlist`/`watching` commands.
   - [ ] `fetch_mal_id` (optional override, default returns `Ok(None)`):
     - Override this if the provider page contains a link to MAL (e.g. AniDB
       scrapes `myanimelist.net/anime/<id>` from the show detail page).
-    - Senshi uses its numeric show ID directly as the MAL ID, so
-      `fetch_mal_id` just returns `Ok(Some(show_id.to_string()))`.
     - If the provider has no MAL cross-reference at all, leave the default
       `Ok(None)` — the MAL sync layer will search MAL by title instead.
 
@@ -86,8 +84,6 @@ Different providers resolve this differently:
 
 | Provider  | Strategy |
 |-----------|----------|
-| Senshi    | show ID **is** the MAL ID — no cache bucket needed |
-| AniDB     | `fetch_mal_id` scrapes the show page; cached in `anidb_entries` |
 | AniNeko   | no page link; cached in `anineko_entries` after user-confirmed search |
 | AnimeHub  | no page link; cached in `animehub_entries` after user-confirmed search |
 
@@ -102,7 +98,7 @@ For every **new provider** that does NOT expose the MAL ID natively:
 - [ ] Add the provider variant in `MalIdCache::get_cached_id()`.
 - [ ] Add the provider variant in `MalIdCache::insert_and_save()`.
 
-If the provider returns MAL IDs natively (like Senshi):
+If the provider returns MAL IDs natively:
 - [ ] Add a comment in `MalIdCache::get()` explaining why no bucket is needed.
 - [ ] The `_` arm in `get/get_cached_id/insert_and_save` already silently ignores it.
 
@@ -189,7 +185,7 @@ provider's show ID using `MalIdCache::get_cached_id`.
       you followed §4).
 - [ ] In `src/cmd/sync.rs`, find the function that constructs a client and calls
       `play_show` after a MAL watchlist entry is selected, and add a
-      `Provider::<Name>` arm there. Follow the existing Senshi / AniDB / AniNeko /
+      `Provider::<Name>` arm there. Follow the existing AniNeko /
       AnimeHub pattern exactly.
 
 ---
@@ -198,7 +194,7 @@ provider's show ID using `MalIdCache::get_cached_id`.
 
 `play_show` already calls `crate::downloader::download_episode(…)` generically
 when `--download` / `-D` is passed. Stream quality selection for downloads
-always uses `AnidbQuality::Highest` for non-AniDB providers.
+always uses `Quality::Highest`.
 
 - [ ] No code changes needed unless the new provider requires special stream
       headers or authentication that `download_episode` does not support.
@@ -263,19 +259,6 @@ always uses `AnidbQuality::Highest` for non-AniDB providers.
 | `src/cmd/sync.rs` | Add arm for watchlist/watching commands |
 | `src/config.rs` | Add `<Name>Config` section if provider needs configurable settings |
 | `README.md` | Document the new provider |
-
----
-
-## Senshi special note — "show ID is MAL ID" pattern
-
-Senshi is unique: its numeric show IDs are directly MAL anime IDs.
-- `search_shows` sets `mal_id: Some(item.id.to_string())` on every result.
-- `fetch_mal_id` returns `Ok(Some(show_id.to_string()))` (trivial parse).
-- `MalIdCache` has no bucket for Senshi — `get/get_cached_id/insert_and_save`
-  all hit the `_ => None / {}` arms.
-
-If a future provider similarly exposes MAL IDs natively, follow the same pattern
-rather than adding a needless cache bucket.
 
 ---
 
