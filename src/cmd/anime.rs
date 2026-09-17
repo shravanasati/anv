@@ -37,7 +37,7 @@ pub async fn run_anime_flow<P: SyncProvider>(
 
             if !target_provider.is_anime() {
                 bail!(
-                    "The provider for this history entry ('{}') is no longer available. Please specify an active provider with -p/--provider (e.g. -p anineko).",
+                    "The provider for this history entry ('{}') is no longer available. Please specify an active provider with -p/--provider (e.g. -p animehub).",
                     entry.provider.display_name()
                 );
             }

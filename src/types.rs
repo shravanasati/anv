@@ -73,8 +73,8 @@ impl StreamOption {
 pub enum Provider {
     #[default]
     All,
-    Anineko,
     Animehub,
+    Hianime,
     #[value(skip)]
     #[serde(other)]
     Unknown,
@@ -84,17 +84,15 @@ impl Provider {
     pub fn is_anime(self) -> bool {
         matches!(
             self,
-            Provider::All
-                | Provider::Anineko
-                | Provider::Animehub
+            Provider::All | Provider::Animehub | Provider::Hianime
         )
     }
 
     pub fn display_name(self) -> &'static str {
         match self {
             Provider::All => "All Providers",
-            Provider::Anineko => "AniNeko",
             Provider::Animehub => "AnimeHub",
+            Provider::Hianime => "HiAnime",
             Provider::Unknown => "Unknown",
         }
     }
@@ -102,8 +100,8 @@ impl Provider {
     pub fn cli_name(self) -> &'static str {
         match self {
             Provider::All => "all",
-            Provider::Anineko => "anineko",
             Provider::Animehub => "animehub",
+            Provider::Hianime => "hianime",
             Provider::Unknown => "unknown",
         }
     }
@@ -120,6 +118,8 @@ mod tests {
         let p: Provider = serde_json::from_str("\"anidb\"").unwrap();
         assert_eq!(p, Provider::Unknown);
         let p: Provider = serde_json::from_str("\"senshi\"").unwrap();
+        assert_eq!(p, Provider::Unknown);
+        let p: Provider = serde_json::from_str("\"anineko\"").unwrap();
         assert_eq!(p, Provider::Unknown);
     }
 

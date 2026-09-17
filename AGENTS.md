@@ -3,7 +3,7 @@
 This file documents the conventions and requirements that **must** be followed
 when adding a new provider to the `anv` codebase.
 It is derived from a full analysis of every existing anime provider
-(`animehub`, `anineko`) and all the
+(`animehub`) and all the
 systems that interact with them (history, MAL sync, CLI routing, config,
 downloader, etc.).
 
@@ -84,7 +84,6 @@ Different providers resolve this differently:
 
 | Provider  | Strategy |
 |-----------|----------|
-| AniNeko   | no page link; cached in `anineko_entries` after user-confirmed search |
 | AnimeHub  | no page link; cached in `animehub_entries` after user-confirmed search |
 
 For every **new provider** that does NOT expose the MAL ID natively:

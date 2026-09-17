@@ -79,12 +79,11 @@ use crate::types::Provider;
 /// The confirmation dialog is shown only for IDs not yet in this cache.
 ///
 /// Field routing:
-/// - `anineko_entries` — AniNeko show IDs
 /// - `animehub_entries` — AnimeHub show IDs
+/// - HiAnime needs no bucket: it resolves MAL IDs natively via
+///   `HianimeClient::fetch_mal_id` (embed URL carries `/mal/<id>/`).
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct MalIdCache {
-    #[serde(default)]
-    anineko_entries: HashMap<String, u32>,
     #[serde(default)]
     animehub_entries: HashMap<String, u32>,
 }
@@ -109,7 +108,6 @@ impl MalIdCache {
     /// Per-provider cache bucket.
     fn bucket(&self, provider: Provider) -> Option<&HashMap<String, u32>> {
         match provider {
-            Provider::Anineko => Some(&self.anineko_entries),
             Provider::Animehub => Some(&self.animehub_entries),
             _ => None,
         }
@@ -117,7 +115,6 @@ impl MalIdCache {
 
     fn bucket_mut(&mut self, provider: Provider) -> Option<&mut HashMap<String, u32>> {
         match provider {
-            Provider::Anineko => Some(&mut self.anineko_entries),
             Provider::Animehub => Some(&mut self.animehub_entries),
             _ => None,
         }
@@ -1027,7 +1024,6 @@ mod tests {
             "animehub_entries": {"abc": 789}
         }"#;
         let cache: MalIdCache = serde_json::from_str(legacy_json).unwrap();
-        assert_eq!(cache.get("123", Provider::Anineko), Some(456));
         assert_eq!(cache.get("abc", Provider::Animehub), Some(789));
         assert_eq!(cache.get("gate-1759", Provider::Unknown), None);
     }

@@ -121,19 +121,29 @@ fn default_false() -> bool {
     false
 }
 
-fn deserialize_preferred_provider<'de, D>(deserializer: D) -> std::result::Result<Provider, D::Error>
+fn deserialize_preferred_provider<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Provider, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let p = Provider::deserialize(deserializer)?;
-    if p.is_anime() {
-        Ok(p)
-    } else {
-        eprintln!(
-            "Warning: preferred_provider in config is not a valid anime provider. Falling back to 'all'."
-        );
-        Ok(Provider::All)
-    }
+    // Deserialize as a plain string first: the `config` crate rejects unknown
+    // enum variants before serde's `#[serde(other)]` fallback can engage, so a
+    // stale value (e.g. `preferred_provider = "anidb"`) would otherwise fail
+    // the *entire* config load and silently drop all user settings.
+    let raw = String::deserialize(deserializer)?;
+    let provider = match raw.to_lowercase().as_str() {
+        "all" => Provider::All,
+        "animehub" => Provider::Animehub,
+        "hianime" => Provider::Hianime,
+        _ => {
+            eprintln!(
+                "Warning: preferred_provider '{raw}' in config is not a valid anime provider. Falling back to 'all'."
+            );
+            Provider::All
+        }
+    };
+    Ok(provider)
 }
 
 const CONFIG_HEADER: &str = "# anv configuration
@@ -157,7 +167,7 @@ const CONFIG_HEADER: &str = "# anv configuration
 #
 # preferred_provider    -- content provider to use by default when -p / --provider flag
 #                         is omitted (default: \"all\")
-#                         possible values: all, anineko, animehub
+#                         possible values: all, animehub, hianime
 #
 # [mal]
 #   client_id -- your MAL API client ID

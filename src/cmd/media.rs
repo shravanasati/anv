@@ -348,7 +348,7 @@ mod tests {
             true, // binge: should auto play all 3 episodes
             &mut history,
             Translation::Sub,
-            Provider::Anineko,
+            Provider::Animehub,
             MediaLoopConfig {
                 select_prompt: "Select",
                 use_fuzzy: false,

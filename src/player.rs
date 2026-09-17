@@ -107,11 +107,32 @@ pub async fn launch_player(
         }
     }
 
+    let mut temp_sub: Option<std::path::PathBuf> = None;
     if let Some(sub) = &stream.subtitle {
-        cmd.arg(format!("--sub-file={sub}"));
+        if is_remote_url(sub) {
+            match download_subtitle_to_temp(sub, &stream.headers, episode).await {
+                Ok(path) => {
+                    cmd.arg(format!("--sub-file={}", path.display()));
+                    temp_sub = Some(path);
+                }
+                Err(err) => {
+                    crate::dbg_log!(
+                        "player",
+                        "subtitle prefetch failed ({err:#}); falling back to remote URL"
+                    );
+                    cmd.arg(format!("--sub-file={sub}"));
+                }
+            }
+        } else {
+            cmd.arg(format!("--sub-file={sub}"));
+        }
     }
     apply_header_args(&mut cmd, &stream.headers);
-    if stream.is_hls {
+    // Force HLS demuxing only when the URL gives no `.m3u8` hint (i.e. the
+    // `#` workaround in `format_hls_player_url` kicked in). The flag is
+    // process-global in mpv and would otherwise force HLS probing onto
+    // `--sub-file` inputs too, breaking all external subtitles.
+    if needs_hls_format_hint(&stream.url, stream.is_hls) {
         cmd.arg("--demuxer-lavf-format=hls");
     }
 
@@ -137,6 +158,18 @@ pub async fn launch_player(
             return Err(anyhow!(err).context(format!("failed to launch player '{player}'")));
         }
     };
+
+    // Playback finished (or failed to start); the prefetched subtitle file is
+    // no longer needed.
+    if let Some(path) = &temp_sub {
+        if let Err(err) = tokio::fs::remove_file(path).await {
+            crate::dbg_log!(
+                "player",
+                "failed to remove temp subtitle {}: {err}",
+                path.display()
+            );
+        }
+    }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -168,6 +201,74 @@ pub async fn launch_player(
     Ok(())
 }
 
+fn is_remote_url(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
+}
+
+fn sanitize_filename_part(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Fetch a remote subtitle file into the OS temp dir and return its path.
+/// mpv opens `--sub-file` URLs through its own demuxer stack, which fails
+/// against some CDN hosts (partial reads during probing), so playing from a
+/// fully-fetched local file is strictly more reliable. The caller deletes the
+/// file after playback.
+async fn download_subtitle_to_temp(
+    url: &str,
+    headers: &std::collections::HashMap<String, String>,
+    episode: &str,
+) -> Result<std::path::PathBuf> {
+    use reqwest::header::{HeaderName, HeaderValue};
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        // HTTP/1.1-only: some file-CDN WAFs (e.g. MegaPlay's) reject HTTP/2
+        // requests from non-browser clients with 403 while HTTP/1.1 passes.
+        .http1_only()
+        .build()?;
+    let mut req = client.get(url);
+    for (k, v) in headers {
+        let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(k.as_bytes()),
+            HeaderValue::from_str(v),
+        ) else {
+            continue;
+        };
+        req = req.header(name, value);
+    }
+    let bytes = req.send().await?.error_for_status()?.bytes().await?;
+    if bytes.is_empty() {
+        bail!("empty subtitle file from {url}");
+    }
+
+    let ext = url
+        .split('?')
+        .next()
+        .unwrap_or(url)
+        .rsplit('.')
+        .next()
+        .filter(|e| e.len() <= 4 && e.chars().all(|c| c.is_ascii_alphanumeric()))
+        .unwrap_or("vtt");
+    let path = std::env::temp_dir().join(format!(
+        "anv-sub-{}-{}.{}",
+        std::process::id(),
+        sanitize_filename_part(episode),
+        ext
+    ));
+    tokio::fs::write(&path, &bytes).await?;
+    crate::dbg_log!("player", "prefetched subtitle to {}", path.display());
+    Ok(path)
+}
+
 pub fn apply_header_args(cmd: &mut Command, headers: &std::collections::HashMap<String, String>) {
     for (key, value) in headers {
         if key.eq_ignore_ascii_case("user-agent") {
@@ -193,6 +294,12 @@ pub fn format_hls_player_url(url: &str, is_hls: bool) -> String {
     }
 }
 
+/// Whether mpv needs an explicit HLS format hint: only for HLS streams whose
+/// URL carries no `.m3u8` marker for auto-detection.
+pub fn needs_hls_format_hint(url: &str, is_hls: bool) -> bool {
+    is_hls && !url.contains(".m3u8")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +315,37 @@ mod tests {
 
         let m3u8_url = "https://example.com/playlist.m3u8";
         assert_eq!(format_hls_player_url(m3u8_url, true), m3u8_url);
+    }
+
+    #[test]
+    fn test_is_remote_url() {
+        assert!(is_remote_url("https://example.com/s.vtt"));
+        assert!(is_remote_url("http://example.com/s.vtt"));
+        assert!(!is_remote_url("/tmp/subs.vtt"));
+        assert!(!is_remote_url("file:///tmp/subs.vtt"));
+    }
+
+    #[test]
+    fn test_sanitize_filename_part() {
+        assert_eq!(sanitize_filename_part("12"), "12");
+        assert_eq!(sanitize_filename_part("5-6"), "5-6");
+        assert_eq!(sanitize_filename_part("1 (v2)"), "1__v2_");
+    }
+
+    #[test]
+    fn test_needs_hls_format_hint() {
+        assert!(needs_hls_format_hint(
+            "https://cdn.example/stream/123",
+            true
+        ));
+        assert!(!needs_hls_format_hint(
+            "https://cdn.example/master.m3u8",
+            true
+        ));
+        assert!(!needs_hls_format_hint(
+            "https://cdn.example/video.mp4",
+            false
+        ));
     }
 
     #[test]

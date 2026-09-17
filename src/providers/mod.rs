@@ -2,29 +2,12 @@ use crate::types::{Provider, ShowInfo, StreamOption, Translation};
 use anyhow::{Result, bail};
 
 pub mod animehub;
-pub mod anineko;
+pub mod hianime;
 
 pub const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36";
 
 pub const AUTO_QUALITY_LABEL: &str = "auto";
 pub const AUTO_QUALITY_RANK: i32 = 0;
-
-pub fn parse_quality_rank(label: &str) -> i32 {
-    let clean = label.trim().to_lowercase();
-    if clean.starts_with("1080") {
-        1080
-    } else if clean.starts_with("720") {
-        720
-    } else if clean.starts_with("480") {
-        480
-    } else if clean.starts_with("360") {
-        360
-    } else if clean.starts_with("240") {
-        240
-    } else {
-        AUTO_QUALITY_RANK
-    }
-}
 
 static RE_HLS_RES: std::sync::LazyLock<regex::Regex> =
     std::sync::LazyLock::new(|| regex::Regex::new(r#"RESOLUTION=\d+x(\d+)"#).unwrap());
@@ -166,7 +149,7 @@ macro_rules! delegate_anime {
     ($self:expr, $fn:ident ($($arg:expr),* $(,)?)) => {
         match $self {
             Self::Animehub(c) => c.$fn($($arg),*).await,
-            Self::Anineko(c) => c.$fn($($arg),*).await,
+            Self::Hianime(c) => c.$fn($($arg),*).await,
         }
     };
 }
@@ -174,7 +157,7 @@ macro_rules! delegate_anime {
 #[derive(Debug, Clone)]
 pub enum AnyAnimeClient {
     Animehub(animehub::AnimehubClient),
-    Anineko(anineko::AninekoClient),
+    Hianime(hianime::HianimeClient),
 }
 
 impl AnimeProvider for AnyAnimeClient {
@@ -204,7 +187,7 @@ impl Provider {
     pub fn anime_client(&self) -> Result<AnyAnimeClient> {
         match self {
             Provider::Animehub => Ok(AnyAnimeClient::Animehub(animehub::AnimehubClient::new()?)),
-            Provider::Anineko => Ok(AnyAnimeClient::Anineko(anineko::AninekoClient::new()?)),
+            Provider::Hianime => Ok(AnyAnimeClient::Hianime(hianime::HianimeClient::new()?)),
             _ => bail!(
                 "Provider '{}' does not support anime streaming.",
                 self.display_name()
@@ -213,10 +196,7 @@ impl Provider {
     }
 
     pub fn all_anime() -> &'static [Provider] {
-        &[
-            Provider::Animehub,
-            Provider::Anineko,
-        ]
+        &[Provider::Animehub, Provider::Hianime]
     }
 
     pub fn valid_anime_providers() -> String {
