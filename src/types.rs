@@ -82,10 +82,7 @@ pub enum Provider {
 
 impl Provider {
     pub fn is_anime(self) -> bool {
-        matches!(
-            self,
-            Provider::All | Provider::Animehub | Provider::Hianime
-        )
+        matches!(self, Provider::All | Provider::Animehub | Provider::Hianime)
     }
 
     pub fn display_name(self) -> &'static str {
